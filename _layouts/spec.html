@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ site.description | escape }}">
+  <title>{{ site.title | escape }} — Version 1.0</title>
+  <link rel="canonical" href="{{ '/' | absolute_url }}">
+  <link rel="stylesheet" href="{{ '/assets/spec.css' | relative_url }}">
+</head>
+<body>
+  <a class="skip" href="#specification">Skip to specification</a>
+  <header class="site-header">
+    <a href="{{ '/' | relative_url }}">VCAP 1.0</a>
+    <nav aria-label="Resources">
+      <a href="https://github.com/vlei-auth/vcap">Repository</a>
+      <a href="{{ '/vcap-1.0.md' | relative_url }}">Markdown</a>
+    </nav>
+  </header>
+  <div class="page">
+    <aside aria-label="Table of contents">
+      <nav id="toc"><h2>Contents</h2></nav>
+    </aside>
+    <main id="specification">{{ content }}</main>
+  </div>
+  <script>
+    const toc = document.getElementById('toc');
+    const list = document.createElement('ol');
+    document.querySelectorAll('main h2, main h3').forEach(heading => {
+      const item = document.createElement('li');
+      item.className = heading.tagName.toLowerCase();
+      const link = document.createElement('a');
+      link.href = '#' + heading.id;
+      link.textContent = heading.textContent;
+      item.append(link);
+      list.append(item);
+    });
+    toc.append(list);
+  </script>
+</body>
+</html>
