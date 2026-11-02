@@ -788,6 +788,7 @@ These operations follow CTAP, with the following VCAP rules:
 5. **Attestation.** Attestation for FIDO credentials MUST NOT use the VCAP attestation key, which identifies a single device. It uses batch attestation shared by a large population of devices, or self attestation.
 6. **Reset.** Reset (§7.12) erases all FIDO credentials together with the KERI slots.
 7. **Credential IDs.** Credential IDs of FIDO credentials MUST NOT begin with `"VH1"` or `"VQ1"`, the prefixes of slot handles and VCAP requests (§7.14).
+8. **Signature counters.** FIDO credentials use their own signature counter. A standard operation never changes a slot's `signCounter` (§5.2) or any other slot state, so WebAuthn sign-in does not affect the counters on which Tickets are based.
 
 ### 7.14 VCAP Operations over WebAuthn
 
@@ -813,7 +814,8 @@ For an RP ID outside `webauthnRpIds`, the authenticator treats `VCAP_ALG` as uns
 
 - A wrapped request **MUST** carry `pinUvAuthParam`, verified as CTAP specifies for the command, with a token holding the CTAP permission `mc` (for authenticatorMakeCredential) or `ga` (for authenticatorGetAssertion) and, where the token is bound to an RP ID, bound to this rpId. Otherwise the authenticator returns `PUAT_REQUIRED` or the corresponding CTAP error. The context and token deadlines of §8.1 step 4 apply.
 - These CTAP permissions take the place of READ, SIGN and MANAGE on this route; the operation is limited to the slot named by the request.
-- Every wrapped request with `up` true collects one new UP per §8.2, regardless of any user-presence state carried by the token. Read-only operations (GetState, Recover) also collect UP on this route, because the client requires it.
+- A wrapped request with a zero-length `pinUvAuthParam` (the probe some clients send to select an authenticator before collecting the PIN) returns `PIN_AUTH_INVALID` **immediately and without collecting UP**, after the checks of §7.14.1 and the lifecycle check below; it creates no context and changes no state. Clients treat this answer as the selection of the authenticator and go on to collect the PIN. This deliberately departs from the CTAP rule that the authenticator first waits for user presence: a wrapped request names an enrolled RP ID and a VCAP slot or algorithm, so only this authenticator can serve it, and the one UP of the operation is collected after the PIN authorization. The probe reveals nothing beyond the silent preflight of §7.14.5 step 2. Requests that are not VCAP-wrapped, and authenticatorSelection, follow CTAP unchanged.
+- Every other wrapped request with `up` true collects one new UP per §8.2, regardless of any user-presence state carried by the token. Read-only operations (GetState, Recover) also collect UP on this route, because the client requires it.
 - The lifecycle MUST be PIN_READY; otherwise the authenticator returns `INVALID_STATE`, or `RECOVERY_REQUIRED` in RECOVERY_REQUIRED (§5.1).
 - In a StateProof produced on this route, `authState.permissions` reports the VCAP permissions the operation stands in for: READ|MANAGE for CreateIdentity, READ for GetState, READ|SIGN for PrepareRotation.
 
@@ -865,9 +867,11 @@ request = {1:op, 2:slotHandle, ? 3:kind, ? 4:ticket_bstr, ? 5:original_bstr, ? 6
 | op | Operation | Further keys | Executes | Result |
 |---:|---|---|---|---|
 | 1 | Sign | 3, 4, 5 | §7.7 steps 2–20 | Signed |
-| 2 | GetState (proof mode) | none | §7.4.2 steps 2–7, `challenge = clientDataHash` | StateProof |
+| 2 | GetState (proof mode) | ? 6 | §7.4.2 steps 2–7, `challenge = clientDataHash`; with key 6, also the selection of §7.8 step 4 | StateProof; with key 6, `[StateProof_bstr, Signed / null]` |
 | 3 | PrepareRotation | none | §7.6 steps 2–8, `challenge = clientDataHash` | StateProof |
 | 4 | Recover | 6 | §7.8 steps 2–6 | Signed |
+
+With key 6, op 2 resolves an unknown outcome in one call (§12.9.3). `Signed` is the record that §7.8 step 4 selects for `originalDigest`, encoded as in §7.8 step 6, or null when the slot is not ACTIVE or neither lastSigned nor latest matches. The operation remains read-only: it signs nothing and writes no state.
 
 The slot is the one named by `slotHandle`. The largest message on this route is therefore `1023 − 3 − len(CBOR(request))` with `original` counted as an empty bstr; with a typical Ticket of about 180 bytes this leaves roughly 780 bytes. A message that does not fit in VCAPREQ is signed through the native route with the upload commands (§7.7, §7.9).
 
@@ -1346,7 +1350,8 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 | 8 | Employee | Sign(IXN, CLIENT): Agent approval | 1 |
 | 9 | Employee | CreateIdentity(WORK) → Sign(ICP, WORK) | 1 |
 | 10 | Employee | Sign(RPY, WORK): Agent end-role | 1 |
-| 11 | Employee | Sign(AGENT, CLIENT): limited read/write session | 1 |
+
+On the native route, steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature. The AGENT session (Sign(AGENT, CLIENT), §8.5.3) is not part of onboarding: its claims expire within 300 s, so the platform signs one when it first needs the Agent. On the WebAuthn route (§12.9) each of steps 5, 6, 8, 9 and 10 is one browser call, the two parts of step 9 being separate calls, with one PIN entry and one UP each.
 
 The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before calling KERIA to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
 
@@ -1385,7 +1390,7 @@ The enterprise Ticket issuer MUST:
 
 ### 12.9 Browser Procedures
 
-These procedures apply to authenticators that implement the WebAuthn route (§7.14) and use it from a page served on an RP ID listed in `webauthnRpIds`. The browser performs the PIN exchange and context handling of §12.1; the page handles no PIN or token.
+These procedures apply to authenticators that implement the WebAuthn route (§7.14) and use it from a page served on an RP ID listed in `webauthnRpIds`. The browser performs the PIN exchange and context handling of §12.1; the page handles no PIN or token. Browsers do not keep a token from one call to the next, so each `create()` or `get()` call takes one PIN entry and one UP (§7.14.2). The procedures below therefore use one call per operation: the enterprise issues Tickets from its archived state and asks for a wrapped GetState only when that state is in doubt.
 
 #### 12.9.1 Creating an Identity
 
@@ -1393,16 +1398,23 @@ These procedures apply to authenticators that implement the WebAuthn route (§7.
 2. The page calls `navigator.credentials.create()` with the fields of §7.14.4, `attestation: "none"` and `userVerification: "required"`. The user enters the PIN in the browser and touches once.
 3. The enterprise verifies the clientDataJSON (`type`, `origin`, `challenge`), extracts the StateProof from the credential public key, verifies it with the registered attestation key, and checks that its challenge equals `SHA-256(clientDataJSON)`.
 4. The enterprise records the credential ID as the slot handle together with currentPublic and nextPublic.
+5. The StateProof is the state basis for the slot's first Ticket (ICP with `signCounter` 1, §12.8 item 1); the page does not call GetState before signing it.
 
 #### 12.9.2 Signing
 
-1. The page submits the message to the enterprise. The enterprise durably stores it, which serves as the Outbox on this route; checks the state basis and approves the content (§12.8); and returns VCAPREQ (op 1, slot handle, kind, Ticket, message) with a single-use challenge.
+1. The page submits the message to the enterprise. The enterprise durably stores it, which serves as the Outbox on this route; checks the state basis and approves the content (§12.8); and returns VCAPREQ (op 1, slot handle, kind, Ticket, message) with a single-use challenge. The state basis is the enterprise's archived state of the slot, which the StateProof of §12.9.1 and the `signCount` and Signed result of every earlier signature keep current, so the page does not call GetState first. A wrapped GetState is needed only when the slot is in doubt (§12.9.3).
 2. The page calls `navigator.credentials.get()` with `allowCredentials` containing only VCAPREQ and `userVerification: "required"`. The user enters the PIN and touches once (over NFC, the tap).
 3. The enterprise verifies the clientDataJSON, `deviceSig` with the registered attestation key, and the Signed result per §12.2 step 6, and checks that `signCount` equals the Ticket's `signCounter`. It then archives the signature.
 
 #### 12.9.3 Unknown Outcome
 
-When `get()` fails or the page is closed before the result is archived, the enterprise reads the slot's counter with a wrapped GetState (op 2) or a native GetState and decides per §12.3: if the counter reached the Ticket's `signCounter`, it retrieves the signature with a wrapped Recover (op 4) or a native Recover; otherwise nothing was signed and the Ticket is still valid for the same message. A user who dismisses the browser dialog causes `CTAPHID_CANCEL`, handled per §12.4.
+Browsers report every authenticator error as a generic failure, so the page cannot tell from a failed `get()` whether a signature was made. When `get()` fails or the page is closed before the result is archived, the enterprise marks the slot in doubt and issues no Ticket for another message on it until it has reconciled per §12.3. On this route reconciliation takes one call, a wrapped GetState (op 2) with key 6 set to the Ticket's `originalDigest` (§7.14.5); on the native route it is a GetState followed by Recover.
+
+- If the counter reached the Ticket's `signCounter` and `Signed` is returned, the enterprise verifies it per §12.2 step 6 and archives it.
+- If the counter did not advance, nothing was signed and the Ticket is still valid for the same message. The signature is made only when the user starts it again with a new `get()`; the page MUST NOT repeat it automatically.
+- If the counter advanced but `Signed` is null, a later signature has replaced the record and the enterprise proceeds per §12.3.
+
+A user who dismisses the browser dialog causes `CTAPHID_CANCEL`, handled per §12.4.
 
 
 ---
