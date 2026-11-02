@@ -458,7 +458,7 @@ GetInfo is [CTAP authenticatorGetInfo][ctap-getinfo]. The request and the encodi
 
 | Key | Name | VCAP value |
 |---:|---|---|
-| 0x01 | versions | `["FIDO_2_3", "VCAP_1_0"]`. `"VCAP_1_0"` announces this protocol; platforms detect VCAP support from it |
+| 0x01 | versions | MUST contain `"VCAP_1_0"`, which announces this protocol; platforms detect VCAP support from it. MAY in addition contain `"FIDO_2_1"` and `"FIDO_2_3"`; no other value. For example `["FIDO_2_1", "FIDO_2_3", "VCAP_1_0"]` |
 | 0x04 | options | `clientPin` as CTAP; `pinUvAuthToken`: true; `noMcGaPermissionsWithClientPin` absent, so browsers obtain `mc` / `ga` tokens with the PIN |
 | 0x05 | maxMsgSize | 2048 |
 | 0x06 | pinUvAuthProtocols | `[2]` |
@@ -791,7 +791,7 @@ These operations follow CTAP, with the following VCAP rules:
 
 ### 7.14 VCAP Operations over WebAuthn
 
-This section defines an optional feature (§2.1). An authenticator MAY implement it; one that does not lists no `VCAP_ALG` in GetInfo and processes every authenticatorMakeCredential and authenticatorGetAssertion per §7.13. The route depends on browser and platform behavior that is still being validated (VAF §13), and its encoding may change in a later version.
+This section defines an optional feature (§2.1). An authenticator MAY implement it; one that does not lists no `VCAP_ALG` in GetInfo and processes every authenticatorMakeCredential and authenticatorGetAssertion per §7.13. The route is provisional: it depends on browsers and platforms forwarding the private algorithm identifier, long credential IDs and an opaque signature unchanged, and its encoding may change in a later version.
 
 A web page can invoke CreateIdentity, Sign, proof-mode GetState, PrepareRotation and Recover through the standard WebAuthn API, with no software on the platform other than the browser. The browser carries the request to the authenticator as an ordinary authenticatorMakeCredential or authenticatorGetAssertion. The authenticator recognizes a VCAP request by a private COSE algorithm identifier and by payloads placed in fields that clients forward unchanged, and returns the result in fields that clients return to the page unchanged.
 
