@@ -473,13 +473,13 @@ The VCAP lifecycle is reported by status-mode GetState (§7.4.1), not by GetInfo
 
 ### 7.2 ClientPIN (0x06)
 
-ClientPIN is [CTAP authenticatorClientPIN][ctap-clientpin] with [PIN/UV Auth Protocol Two][ctap-pinproto2] only. Its subcommands, parameters, responses, PIN encoding, PIN retry counter (8) and power-cycle lockout (3 consecutive failures) are as CTAP defines them. The authenticator supports the subcommands getPinRetries (0x01), getKeyAgreement (0x02), setPIN (0x03), changePIN (0x04) and getPinUvAuthTokenUsingPinWithPermissions (0x09); the others return `INVALID_SUBCOMMAND`, and `pinUvAuthProtocol ≠ 2` returns `INVALID_PARAMETER`.
+ClientPIN is [CTAP authenticatorClientPIN][ctap-clientpin] with [PIN/UV Auth Protocol Two][ctap-pinproto2] only. Its subcommands, parameters, responses, PIN encoding, PIN retry counter (8) and power-cycle lockout (3 consecutive failures) are as CTAP defines them. The authenticator supports the subcommands getPinRetries (0x01), getKeyAgreement (0x02), setPIN (0x03), changePIN (0x04), getPinToken (0x05) and getPinUvAuthTokenUsingPinWithPermissions (0x09); the others return `INVALID_SUBCOMMAND`, and `pinUvAuthProtocol ≠ 2` returns `INVALID_PARAMETER`.
 
 VCAP adds the following rules:
 
 1. **Context.** getKeyAgreement establishes the context of the transport that carries it (§5.3): it zeroizes any existing context of that transport, generates a new P-256 key agreement key pair, and derives `contextId` from it (§6.3). A PIN mismatch zeroizes the context, so the platform calls getKeyAgreement again.
-2. **PIN policy.** The minimum PIN length is TrustConfig `minPinChars`, or 4 before personalization, counted in Unicode code points. Personalize sets forcePINChange when an existing PIN is shorter (§7.11); while it is set, getPinUvAuthTokenUsingPinWithPermissions returns `PIN_POLICY_VIOLATION` and changePIN clears it.
-3. **Permissions.** Besides the CTAP permissions, a token can carry the VCAP permissions `READ` (0x0100), `SIGN` (0x0200) and `MANAGE` (0x0400) (§7.0). VCAP permissions are not bound to an RP ID. Permissions are not accumulated: a new token replaces the previous one with exactly the requested permissions.
+2. **PIN policy.** The minimum PIN length is TrustConfig `minPinChars`, or 4 before personalization, counted in Unicode code points. Personalize sets forcePINChange when an existing PIN is shorter (§7.11); while it is set, getPinToken and getPinUvAuthTokenUsingPinWithPermissions return `PIN_POLICY_VIOLATION` and changePIN clears it.
+3. **Permissions.** Besides the CTAP permissions, a token can carry the VCAP permissions `READ` (0x0100), `SIGN` (0x0200) and `MANAGE` (0x0400) (§7.0). VCAP permissions are not bound to an RP ID. Permissions are not accumulated: a new token replaces the previous one with exactly the requested permissions. A token from getPinToken carries only the CTAP permissions `mc` and `ga`, as CTAP defines for it, and never a VCAP permission, so it serves generic clients (§7.13, §7.14) but not VCAP commands, which require getPinUvAuthTokenUsingPinWithPermissions.
 4. **Token lifetime.** The token's lifetime follows §5.3 (an initial usage time limit of 19 800 ms on every transport, then valid until the context ends). The token carries no user-presence state, so every UP-requiring command collects a new UP (§8.2).
 5. **Lifecycle.** A successful setPIN in a personalized authenticator moves the lifecycle to PIN_READY (§5.1). In RECOVERY_REQUIRED every subcommand returns `RECOVERY_REQUIRED`.
 
@@ -986,7 +986,7 @@ The authenticator keeps no record of used Tickets: the signature counter makes e
 
 The authenticator performs the following checks while receiving the message (single pass):
 
-1. The message is one complete JSON object within the length limit that satisfies the event syntax of §8.4.3, with no duplicate keys and no trailing bytes.
+1. The message is one complete JSON object within the length limit that satisfies the event syntax of §8.4.3, with no duplicate top-level keys and no trailing bytes.
 2. The size field of the version string `v` equals the total message length.
 3. `t` equals the event type for the kind (`icp` / `ixn` / `rot`).
 4. `d`, `i` and `p` (IXN / ROT) are 44 bytes with an `E` prefix and satisfy the expected values of §8.4.1.
@@ -1016,7 +1016,7 @@ The authenticator accepts KERI 1.0 events in JSON serialization with the followi
 3. `v` is exactly `"KERI10JSON"` followed by six lowercase hexadecimal digits and `"_"`; the digits give the total message length in bytes.
 4. `s` and `bt` are lowercase hexadecimal strings without leading zeros (`"0"` for zero); `s` has at most 16 digits.
 5. The string values of `v`, `t`, `d`, `i`, `s`, `p`, `kt`, `nt` and the entries of `k` and `n` contain no backslash escape.
-6. The values of `b`, `c`, `a`, `br`, `ba` and the further fields of `exn` and `rpy` are well-formed JSON values; the authenticator checks only their well-formedness.
+6. The values of `b`, `c`, `a`, `br`, `ba` and the further fields of `exn` and `rpy` follow the JSON grammar of RFC 8259. The authenticator checks only that grammar; uniqueness of keys inside these values is checked by the enterprise (§12.8 item 3).
 
 ### 8.5 Non-KEL Format Checks
 
@@ -1378,7 +1378,7 @@ The enterprise Ticket issuer MUST:
 
    The authenticator checks whether the head and counter are current. Slot state cached by the wallet is never a state basis.
 2. Durably store the message before issuing the Ticket; audit IDs stay within the enterprise.
-3. Fully verify route, receiving domain, risk and content authorization; for KEL events also verify the SAID, prior event, witnesses, delegation and network acceptance.
+3. Fully verify route, receiving domain, risk and content authorization, and reject a message that has duplicate keys in any JSON object; for KEL events also verify the SAID, prior event, witnesses, delegation and network acceptance.
 4. Set `signCounter` to the slot's current counter + 1. When it issues another Ticket for a counter value that already has an unused Ticket (for example because the user abandoned the earlier request), it treats the earlier Ticket as still usable until the counter advances, and identifies which message was signed by the `originalDigest` in Signed. When in doubt about device state, require the platform to submit a fresh StateProof.
 5. Perform replay protection for non-KEL results at the receiving end as defense in depth (the signature counter already makes each Ticket single-use).
 6. When an event is permanently rejected by an authority, mark the slot as REJECTED on the enterprise side only with operational authorization: no further Tickets are issued for the slot in this reset epoch, nothing is rolled back, and no replacement event is signed; the slot can be used again only after Reset. On transient failures, redeliver the original signature.
