@@ -291,9 +291,15 @@ hpart = cbor([reset_epoch, 0, WORK])
 tag = hmac.new(handle_key, b"VCAP-HANDLE\0" + hpart, hashlib.sha256).digest()[:16]
 slot_handle = b"VH1" + hpart + tag
 vcapreq = b"VQ1" + cbor({1: 2, 2: slot_handle})
+# Wrapped GetState reports READ, preserving the existing E.8 proof unchanged.
+wrapped_state_body = cbor([2, device, reset_epoch, config_digest, challenge, [8, 0, 0x0100, 0, 590000], slots])
+wrapped_state_proof = cbor({1: wrapped_state_body, 2: ed_sign(att_sk, b"VCAP-STATE\0" + wrapped_state_body)})
 V["E.9 WebAuthn route"] = {
     "slotHandle (slot 0, WORK)": hx(slot_handle),
     "VCAPREQ GetState (op 2)": hx(vcapreq),
+    "VCAPREQ GetState with originalDigest (op 2, key 6)": hx(b"VQ1" + cbor({1: 2, 2: slot_handle, 6: H(icp)})),
+    "result_bstr GetState with originalDigest matching": hx(cbor([wrapped_state_proof, {1: icp_sig, 2: s0c_pub, 3: H(icp), 4: len(icp), 5: 1}])),
+    "result_bstr GetState with originalDigest null": hx(cbor([wrapped_state_proof, NULL])),
     "rpIdHash": hx(rp_ids[0]),
 }
 
