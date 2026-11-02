@@ -1,0 +1,105 @@
+{
+  "description": "VCAP 1.0 test vectors (VCAP Appendix E). All byte strings are lowercase hex.",
+  "inputs": {
+    "seed derivation": "seed(label) = SHA-256('vcap-tv:' || label)",
+    "seed labels": "attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, agent-nonce, key-agreement (P-256 scalar = seed mod (n - 1) + 1)",
+    "attestationSeed": "d77de77cbf8685c43cbf6063cebe21cbc2d8a3b88018fda727a00c467aeb7dbd",
+    "attestationPublic": "39f3eed37dbc97a952cee6c26855e2efb610d7f9c58bc5ae68a14213eba17e61",
+    "enterpriseRootSeed": "63c3623cbf9c0b962fe6d222d27b892d97c58da34801c735e5a64f2e7612621b",
+    "enterpriseRoot": "637da14a2d51b71f9f014e4b6baa897e1c2930ff142024c8fce252a54fb63b8d",
+    "roleSeed(ops)": "4f4248c0dbac867c124636c4446ba72854ae0c04bacd33099df948cfc21639d8",
+    "rolePublic(ops)": "9f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca",
+    "slot0 (WORK) currentSeed": "733dc232c31a44b4743b2aec578b38fc8c9aa3a65203c15fda5881da1424fb5f",
+    "slot0 currentPublic": "6a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b8915",
+    "slot0 (WORK) nextSeed": "8e8648b7bc38264f49d50e962e19180f6e71748b04e436ca62c279710cf44644",
+    "slot0 nextPublic": "228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3d",
+    "slot1 (CLIENT) currentPublic": "7ca14221c7a974006861637fda5cb3062b5adfee4feb58e43887313771cf0692",
+    "slot1 nextPublic": "576f07a58f3368a19da7a5a9153ffe9f64cb1bf613f560b8a7fc8169ea67c574",
+    "handleKey": "0d041887d7cf7864d6d577a5b534807ad29f13175de2e28bb08b118276857d2b",
+    "pinUvAuthToken": "83eaddd0d8b0571de37099f0b36fa87fcd6a74eb898d4f2e1edde10d1b0baa4c",
+    "challenge": "5a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c",
+    "agentNonce": "ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a",
+    "keyAgreementPrivateScalar": "521f6cb05ab172aca6ad5d25801ab97f98aca8396212d74031ba5c25240fb579",
+    "enterpriseIdentifier": "VLEIAUTHEXAMPLE00001",
+    "rpId": "vlei.example.com",
+    "resetEpoch": 0
+  },
+  "vectors": {
+    "E.1 Identifiers": {
+      "device": "778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7",
+      "tenant": "2f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705",
+      "keyAgreement.x": "4bded8fe009c05552185af797aa1687ddc585de9d6c99e8123dfcf57b839378b",
+      "contextId": "76495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee"
+    },
+    "E.2 KERI encodings": {
+      "qb64(D, slot0 current)": "DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV",
+      "commit(slot0 next)": "ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M",
+      "qb64(D, slot0 next) (commit input, ASCII)": "DCKOw_qVulTD7Fu6PSfCNcckXw3cPE__XFdR2sSuCG09"
+    },
+    "E.3 TrustConfig": {
+      "content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F23, rolePublic]], [SHA-256(rpId)]]",
+      "body": "88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f2358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a",
+      "rootSignature": "bcded429480c7803ae3ddf1388ff210931887ab191fe3756d365a90cc881eb411c2e0a3f804db83f4d963013f2736375cf47b5432e3c51ea3bdeee83b22d850f",
+      "envelope": "82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f2358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a5840bcded429480c7803ae3ddf1388ff210931887ab191fe3756d365a90cc881eb411c2e0a3f804db83f4d963013f2736375cf47b5432e3c51ea3bdeee83b22d850f",
+      "configurationDigest": "5f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f"
+    },
+    "E.4 KERI events": {
+      "slot0 icp (UTF-8)": "{\"v\":\"KERI10JSON00012b_\",\"t\":\"icp\",\"d\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"s\":\"0\",\"kt\":\"1\",\"k\":[\"DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV\"],\"nt\":\"1\",\"n\":[\"ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M\"],\"bt\":\"0\",\"b\":[],\"c\":[],\"a\":[]}",
+      "slot0 icp length": 299,
+      "slot0 icp originalDigest": "0de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a415",
+      "slot0 AID (= d = i)": "EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2",
+      "slot0 ixn s=1 (UTF-8)": "{\"v\":\"KERI10JSON0000cb_\",\"t\":\"ixn\",\"d\":\"EIG_otvN28LG8_WTikcc-pND9e1kW8_TWka4cF9V4q0k\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"s\":\"1\",\"p\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"a\":[]}",
+      "slot0 ixn length": 203,
+      "slot0 ixn originalDigest": "a84fb3d3a24cfab8f5e9c833ef00823b4887a2cdbaf2a21ff0098787c6fc73ab",
+      "slot0 ixn SAID": "EIG_otvN28LG8_WTikcc-pND9e1kW8_TWka4cF9V4q0k",
+      "slot1 CLIENT AID": "EKYc31TwM0SQxtZa6a5rPIdnOdfHhB3ueiebE8haHBa4"
+    },
+    "E.5 KeyRef and Tickets": {
+      "KeyRef(slot 0, WORK, current)": "7ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4",
+      "ICP Ticket body": "86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b",
+      "ICP Ticket signature": "24522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de5704",
+      "ICP Ticket envelope": "83584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de5704",
+      "ICP ticketId (VCAP-EI)": "27bf2fb71f91ae4a5420cfadd0963700",
+      "IXN Ticket envelope (signCounter 2)": "83584a86020258207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4025820a84fb3d3a24cfab8f5e9c833ef00823b4887a2cdbaf2a21ff0098787c6fc73ab18cb636f707358400409c70e3bc3e1a977c8a18194426d55d068f3b00f608cde1bbb616cce51eccc82b01e3e0e4706a764443ce2158f73eb347066dcc575cc6bbdd0b44e5d9c2007"
+    },
+    "E.6 Sign request (ICP, inline)": {
+      "H(CBOR(P))": "87e852948abb059d3ec4a62f349918f226ac3a240550ceb5d23c7e5026eca50e",
+      "auth message": "564341502d434d440076495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee5387e852948abb059d3ec4a62f349918f226ac3a240550ceb5d23c7e5026eca50e",
+      "pinUvAuthParam": "4a45bf36c1082563634455a4a762abbe3346b259a66461097301e147ceefb67f",
+      "request (command byte + CBOR)": "53a60100020103589483584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de57040459012b7b2276223a224b45524931304a534f4e3030303132625f222c2274223a22696370222c2264223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2269223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2273223a2230222c226b74223a2231222c226b223a5b22444770686e316f42324731576d354e6f45507855646c4f4c565164745f4f5f36426d7367633569306d346b56225d2c226e74223a2231222c226e223a5b224543653377517a3855544f46716136644e6e776263396d5164496d75644b78685f5a41396d61595f7057304d225d2c226274223a2230222c2262223a5b5d2c2263223a5b5d2c2261223a5b5d7d18fe0218ff58204a45bf36c1082563634455a4a762abbe3346b259a66461097301e147ceefb67f",
+      "request length": 499
+    },
+    "E.7 Signed (ICP)": {
+      "note": "Signature by RFC 8032 deterministic Ed25519; an authenticator's signature may differ and is checked by verification.",
+      "signature": "1f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f696745601",
+      "Signed": "a50158401f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f6967456010258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89150358200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150419012b0501",
+      "response": "00a50158401f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f6967456010258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89150358200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150419012b0501"
+    },
+    "E.8 StateProof (after ICP)": {
+      "content": "slot 0 ACTIVE WORK after the ICP; authState [8, 0, READ|SIGN, 0, 590000]",
+      "stateBody": "87025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600",
+      "signature": "980b4ad528b94d6d42207597b6c2010628f4498dbbd33a4880e5ccb473d77d84fcc9e15e6a07e6c12d3e4d09f5e9d1d659e1dd46c75d555a518dbf3b33eff70c",
+      "StateProof": "a20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840980b4ad528b94d6d42207597b6c2010628f4498dbbd33a4880e5ccb473d77d84fcc9e15e6a07e6c12d3e4d09f5e9d1d659e1dd46c75d555a518dbf3b33eff70c"
+    },
+    "E.9 WebAuthn route": {
+      "slotHandle (slot 0, WORK)": "5648318300000286867ec34f2153cf3f8421604168f7a0",
+      "VCAPREQ GetState (op 2)": "565131a2010202575648318300000286867ec34f2153cf3f8421604168f7a0",
+      "rpIdHash": "02e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a"
+    },
+    "E.10 AGENT original (slot 1, CLIENT)": {
+      "content": "receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'veridian'",
+      "original": "564341502d4147454e542d53455353494f4e0006454b5963333154774d30535178745a61366135725049646e4f64664868423375656965624538686148426134860178196167656e742d676174657761792e6578616d706c652e636f6d5820ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a1a6ae80ac01a6ae80bec4ba10168766572696469616e",
+      "length": 149,
+      "originalDigest": "8c7299b02d28d87656f065fbe0160633c55cba81782f073d5f197b1dfb03a674"
+    }
+  },
+  "negative": {
+    "Ticket signature with S + L (§6.4 rule 1: reject)": "83584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc01382546063a9a8cd4ede6eb0a9baa681418b2d4063a543a68082361a73ff7de5714",
+    "icp with a space after ':' (§8.4.3 item 1)": "{\"v\":\"KERI10JSON00012c_\",\"t\": \"icp\",\"d\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"s\":\"0\",\"kt\":\"1\",\"k\":[\"DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV\"],\"nt\":\"1\",\"n\":[\"ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M\"],\"bt\":\"0\",\"b\":[],\"c\":[],\"a\":[]}",
+    "icp with kt before s (§8.4.3 item 2)": "{\"v\":\"KERI10JSON00012b_\",\"t\":\"icp\",\"d\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"kt\":\"1\",\"s\":\"0\",\"k\":[\"DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV\"],\"nt\":\"1\",\"n\":[\"ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M\"],\"bt\":\"0\",\"b\":[],\"c\":[],\"a\":[]}",
+    "icp with uppercase version hex (§8.4.3 item 3)": "{\"v\":\"KERI10JSON00012B_\",\"t\":\"icp\",\"d\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"s\":\"0\",\"kt\":\"1\",\"k\":[\"DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV\"],\"nt\":\"1\",\"n\":[\"ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M\"],\"bt\":\"0\",\"b\":[],\"c\":[],\"a\":[]}",
+    "ixn with s='01' (§8.4.3 item 4)": "{\"v\":\"KERI10JSON0000cc_\",\"t\":\"ixn\",\"d\":\"EIG_otvN28LG8_WTikcc-pND9e1kW8_TWka4cF9V4q0k\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"s\":\"01\",\"p\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"a\":[]}",
+    "icp with escaped t value (§8.4.3 item 5)": "{\"v\":\"KERI10JSON000130_\",\"t\":\"\\u0069cp\",\"d\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"s\":\"0\",\"kt\":\"1\",\"k\":[\"DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV\"],\"nt\":\"1\",\"n\":[\"ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M\"],\"bt\":\"0\",\"b\":[],\"c\":[],\"a\":[]}",
+    "note": "Each negative KERI case keeps the v size equal to the message length, so the named rule is the only violation."
+  }
+}

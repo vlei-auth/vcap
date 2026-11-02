@@ -1,6 +1,14 @@
 # vLEI Client to Authenticator Protocol (VCAP) 1.0
 
-**Status:** Review Draft
+*Editor's Draft — 2 November 2026*
+
+**Specification identifier:** VCAP-1.0  
+**Editor's Draft URL:** https://vlei-auth.github.io/vcap/  
+**Status:** Editor's Draft  
+**Editors:**
+  * Fan Dang (ACentauri Technology Limited)
+
+**Companion documents:** [VAF 1.0](https://vlei-auth.github.io/vaf/), [VCAP-EI 1.0](https://vlei-auth.github.io/vcap-ei/)
 
 **Scope:** Authenticator firmware, and the parts of wallets, enterprise Ticket issuers and manufacturing tools that interact directly with the authenticator.
 
@@ -26,6 +34,8 @@
 - Appendix A Constants
 - Appendix B Role Capability Bits
 - Appendix C References
+- Appendix D Attestation Certificate Chain and Enrollment Records
+- Appendix E Test Vectors
 
 ---
 
@@ -40,26 +50,48 @@ Because both the platform running the wallet and the enterprise services may be 
 1. **Private keys stay in the authenticator.** The PIN failure count is kept in the authenticator and survives power loss. Every signature requires one deliberate user action (user presence, UP): a press of the touch sensor, or over NFC the tap that brings the authenticator into the reader's field.
 2. **Every signature is authorized by the enterprise.** Each signature requires a Ticket issued by an enterprise role key. The Ticket specifies the slot's next signature counter, the signing key, and the digest and length of the message to be signed; each Ticket is usable for exactly one signature.
 3. **Rotation stays within authenticator-generated keys.** The current key and next key in `icp` MUST be two keys generated inside the authenticator. A `rot` MUST be signed with the previously committed next key, and the newly committed next key MUST be freshly generated inside the authenticator. Even if the platform and the enterprise services are both compromised, an attacker therefore cannot rotate the identity to a key outside the authenticator.
-4. **Events never fork.** Events in a slot advance one at a time (sequence number `s` incremented by 1, `p` referencing the previous event); two events with the same sequence number cannot exist.
-5. **Signatures are neither lost nor duplicated.** A signature is durably written in the authenticator before it is returned to the platform. If the response is lost, the same signature is retrieved with Recover; the authenticator signs the event only once. Messages are never persisted. After a successful Reset, the PIN record and all private keys of the old reset epoch are unrecoverable.
+4. **Events advance one at a time.** Events in a slot advance strictly in sequence (sequence number `s` incremented by 1, `p` referencing the previous event), so with intact persistent storage each slot produces at most one event per sequence number.
+5. **Each signature is committed once.** A signature is durably committed in the authenticator before it is returned to the platform. The signature of the latest key event and the most recent signature of the slot remain retrievable with Recover, so a lost response yields the original signature rather than a new one. The authenticator stores no message. After a successful Reset, the PIN record and all private keys of the old reset epoch are unrecoverable.
 
 This document specifies the authenticator state model, the parameters and processing algorithm of each command, data structures and status codes, for use by firmware implementers, wallets, enterprise services and external auditors.
 
 ### 1.2 Scope
 
-This document defines the interface between the authenticator and the platform, and the format of enterprise-signed objects consumed by the authenticator. The internal protocols of enterprise gateways, KERIA, witnesses and wallets are out of scope; Section 12 states only their requirements for using authenticator output.
+This document defines the interface between the authenticator and the platform, and the format of enterprise-signed objects consumed by the authenticator. The internal protocols of enterprise gateways, KERIA, witnesses and wallets are out of scope; Section 12 states only their requirements for using authenticator output. The interface between platforms and the enterprise service (Ticket requests, archiving and recovery) is specified by the companion [VCAP Enterprise Interface 1.0](https://vlei-auth.github.io/vcap-ei/).
 
-The VCAP operations are reachable in two ways: as native CTAP vendor commands (§7.4–§7.12), and wrapped in standard WebAuthn calls that a web page makes through the browser (§7.14). Both routes apply the same checks and commit the same state.
+The VCAP operations are reachable as native CTAP vendor commands (§7.4–§7.12) over the transports of Section 11. An authenticator MAY in addition implement the WebAuthn route (§7.14), through which a web page invokes the same operations with standard WebAuthn calls; both routes apply the same checks and commit the same state.
 
 ---
 
 ## 2. Conformance
 
-The key words "**MUST**", "**MUST NOT**", "**SHOULD**", "**SHOULD NOT**" and "**MAY**" in this document are to be interpreted as described in RFC 2119.
+The key words "**MUST**", "**MUST NOT**", "**REQUIRED**", "**SHOULD**", "**SHOULD NOT**", "**RECOMMENDED**" and "**MAY**" in this document are to be interpreted as described in BCP 14 [RFC 2119] [RFC 8174] when, and only when, they appear in all capitals, as shown here.
+
+### 2.1 Conformance Classes
+
+| Class | Implements | Sections that apply |
+|---|---|---|
+| **Authenticator** | Firmware and hardware of the vLEI Key | §§ 5–11, Appendices A and B; §7.14 when the WebAuthn route is implemented |
+| **Platform** | Software that sends VCAP commands: wallets, IT tools, manufacturing tools | §§ 6, 9, 10, 11 (as sender) and 12.1–12.7 |
+| **Web platform** | An enterprise web page using the WebAuthn route | §§ 7.14, 12.9 |
+| **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7–12.9, Appendix D |
+| **Manufacturer** | Producer of the attestation identity | Appendix D.1, D.3 |
+
+An Authenticator implements at least one transport of Section 11 and declares in GetInfo `transports` exactly the transports it implements (§7.1). The following features are optional; an Authenticator that implements one implements all of its requirements:
+
+| Feature | Sections |
+|---|---|
+| USB HID transport | §11.2 |
+| NFC transport | §11.3 |
+| USB CCID transport | §11.4 |
+| WebAuthn route | §7.14 |
+
+### 2.2 Normative Statements
 
 - Numbered algorithms introduced with "The authenticator performs the following steps" are normative: the externally observable behavior of the authenticator (the status code returned, whether state is written, whether output is produced) MUST equal the result of executing those steps in order.
 - **Error precedence is unspecified.** When a request violates several conditions, the authenticator MAY return any of the corresponding errors; platforms MUST NOT base decisions on error precedence.
-- Status codes are not cryptographic proof. A platform MUST NOT treat `OK` alone as proof that a business operation completed, nor treat an error alone as proof that nothing was committed (§12.3).
+- State-machine tables, transition tables and "Constraints" or "Rules" lists are normative for the Authenticator.
+- A platform determines whether an operation was committed only from a verified Signed or StateProof (§12.3); status codes carry no cryptographic evidence.
 
 ---
 
@@ -76,7 +108,7 @@ Command names, subcommand names, field names, data structure names, status codes
 | enterprise | The organization that holds the enterprise root key and operates the Ticket issuer and gateway |
 | manufacturer | The party that generates the attestation identity and issues its certificate chain at manufacturing time |
 | Ticket issuer | The enterprise service that issues Tickets |
-| transport | One logical link: one CTAPHID channel over USB, or one NFC field |
+| transport | One logical link: one CTAPHID channel over USB HID, one NFC field session, or one CCID card session (§11.4) |
 | context | Volatile state established by ClientPIN getKeyAgreement and bound to one transport, comprising the key agreement key, contextId, token and upload state |
 | pinUvAuthToken (token) | A 32-byte random value issued after successful PIN verification, used to authenticate subsequent commands |
 | user presence (UP) | One new press of the touch sensor by the user, or over NFC one tap into the reader's field (§8.2) |
@@ -104,6 +136,7 @@ Command names, subcommand names, field names, data structure names, status codes
 | reset intent record | A record durably written by Reset before secrets are destroyed, used to complete the Reset at the next boot after a power loss |
 | domain separation tag | A fixed string prepended to a signature or MAC input to distinguish its purpose |
 | zeroize | Clear and invalidate volatile secrets and state |
+| safe public key | An Ed25519 public key in canonical encoding that is not a small-order point and lies in the prime-order subgroup |
 | challenge | A single-use 32-byte random value generated by a verifier to establish the freshness of a StateProof |
 | initial usage time limit | The time within which a token MUST be first used to authenticate a command after it is issued |
 | power-cycle lockout | After a threshold of consecutive PIN failures, further verification requires a power cycle |
@@ -111,6 +144,7 @@ Command names, subcommand names, field names, data structure names, status codes
 | signature counter (`signCounter`) | A persistent per-slot counter advanced by every signature; each Ticket names the value its signature will receive (§5.2) |
 | slot handle | The credential ID that names a slot on the WebAuthn route (§7.14.3) |
 | field session | The period an NFC authenticator is powered by one reader field (§11.3) |
+| card session | The period from a CCID ICC power-on to the matching power-off (§11.4) |
 | Outbox | Platform storage in which a message is durably saved before it is signed |
 | archive | Durable enterprise storage of messages and their signatures |
 
@@ -139,7 +173,7 @@ Manufacturer ── generates attestation identity, issues certificate chain ─
 Enterprise root key ── bound by BindEnterprise; signs TrustConfig (registers role keys) ──▶ Authenticator
 Role key ── issues Ticket ──▶ Platform ──▶ Authenticator
 
-Authenticator (attestation key, 4 slots) ◀─CTAPHID / NFC─▶ Platform (wallet) ◀─HTTPS─▶ Ticket issuer / gateway ──▶ KERIA / witnesses / recipients
+Authenticator (attestation key, 4 slots) ◀─CTAPHID / NFC / CCID─▶ Platform (wallet) ◀─HTTPS─▶ Ticket issuer / gateway ──▶ KERIA / witnesses / recipients
 ```
 
 - The authenticator trusts only: its own attestation identity, the enterprise root key bound by BindEnterprise, the TrustConfig role keys installed under a signature of the enterprise root key, and the employee's PIN and touch.
@@ -150,7 +184,7 @@ Authenticator (attestation key, 4 slots) ◀─CTAPHID / NFC─▶ Platform (wal
 
 ```
 Manufacturing: STOCK initialization ──> STOCK_UNBOUND
-   │ BindEnterprise (tenant + enterprise root public key + UP, controlled environment)
+   │ BindEnterprise (tenant + enterprise root public key + UP, during enrollment)
    ▼
 ENTERPRISE_BOUND
    │ Personalize (TrustConfig signed by the enterprise root key + UP)
@@ -220,7 +254,7 @@ Transitions:
 Constraints:
 
 - The binding is permanent: a bound authenticator cannot be rebound or returned to the factory state.
-- Missing data **MUST NOT** be treated as UNUSED or not personalized; if `personalized=1` and the configuration or a slot record is missing, it SHOULD be treated as corruption.
+- Missing data **MUST NOT** be treated as UNUSED or not personalized; if `personalized=1` and the configuration or a slot record is missing, the authenticator MUST treat it as corruption.
 - The PIN and FIDO credentials (§7.13) are independent of the lifecycle: a PIN can be set and FIDO credentials created in any lifecycle state other than RECOVERY_REQUIRED.
 - In `RECOVERY_REQUIRED`, every command except `GetInfo`, status-mode `GetState`, `Cancel` and `Reset` (including ClientPIN) returns `RECOVERY_REQUIRED`. Reset is the user's way out of this state (§7.12).
 
@@ -266,7 +300,7 @@ UNUSED ────────────────▶ CREATED ────�
 - A context that is not held is zeroized when another transport sends a command that requires a context or a ClientPIN subcommand other than getPinRetries; that command then proceeds normally.
 - A new `getKeyAgreement` on the same transport first zeroizes the old context and then establishes a new one; during an upload it returns `BUSY` per §5.4.
 - A token MUST be first used to authenticate a command within 19 800 ms of issue (the initial usage time limit; CTAP uses this value for NFC, and VCAP applies it to all transports), or it becomes invalid. After first use it remains valid until the context ends (maximum usage period 600 000 ms), with no idle timeout.
-- **Zeroization events:** transport disconnection, NFC `SELECT`, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / Reset, and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
+- **Zeroization events:** transport disconnection, `SELECT` of the FIDO AID over NFC or CCID, CCID ICC power-off, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / Reset, and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
 
 ### 5.4 Upload State
 
@@ -303,7 +337,7 @@ All CBOR of VCAP commands (§7.2–§7.12) and of VCAP data structures MUST sati
 1. Integers and lengths use the shortest definite-length encoding; indefinite-length encoding MUST NOT be used.
 2. A tstr MUST be valid UTF-8.
 3. Tags, floating-point numbers, simple values (`null` only where explicitly permitted by this document) and trailing bytes MUST NOT appear.
-4. Nesting depth ≤ 16 and total item count ≤ 1024.
+4. Nesting depth ≤ 16, and ≤ 1024 data items in total, counting every nested item, map key and map value.
 5. Keys of ordinary maps MUST be unsigned integers in strictly increasing order.
 6. Unknown, missing and extra keys are all rejected.
 
@@ -313,17 +347,22 @@ Violations of items 1–4 return `INVALID_CBOR`; key-set violations of items 5 a
 
 - All fixed-width integers are big-endian unsigned.
 - Signatures are 64-byte `R‖S`; public keys are 32-byte compressed Ed25519 points.
-- AID, SAID and prior are 44-byte KERI qb64 text beginning with `E`.
+- AID, SAID and prior are 44-byte KERI qb64 text beginning with `E` (BLAKE3-256 digest code).
+- `qb64(code, raw32)` is the 44-character KERI qb64 text of a 32-byte value: `code ‖ B[1..43]`, where `B` is the unpadded base64url encoding (44 characters) of `0x00 ‖ raw32` and `B[1..43]` drops its first character.
+- In KERI events, a slot public key appears as `qb64("D", pub)` (transferable Ed25519 verification key).
+- The next-key commitment is `commit(pub) = qb64("E", BLAKE3-256(qb64("D", pub)))`: the BLAKE3-256 digest of the 44 ASCII bytes of the key's qb64 text.
 
 ### 6.3 Identifier Derivation
 
 ```
 device     = H("VCAP-DEVICE-ID\0" ‖ attestationPublic_raw32)
-tenant     = H(UTF-8 encoding of the enterprise identifier)
+tenant     = H(UTF-8 encoding of the enterprise identifier)   ; see below
 configurationDigest = H(complete TrustConfig envelope)
 KeyRef     = H("VCAP-KEYREF\0" ‖ device ‖ resetEpoch_BE8 ‖ CBOR([slot, owner]) ‖ actualPublic_raw32)
 contextId  = H("VCAP-CONTEXT\0" ‖ keyAgreement.x)   ; the authenticator's keyAgreement
 ```
+
+The enterprise identifier is a string chosen by the enterprise: 1..128 bytes of UTF-8 in Unicode Normalization Form C. An enterprise that has an LEI SHOULD use its LEI (ISO 17442: 20 uppercase alphanumeric characters).
 
 `actualPublic` is **the public key actually used for this signature**: current for ICP / IXN / EXN / RPY / AGENT, and old.next for ROT. The authenticator computes KeyRef from its own verified slot state and MUST NOT use a KeyRef or digest supplied by the platform.
 
@@ -331,12 +370,20 @@ contextId  = H("VCAP-CONTEXT\0" ‖ keyAgreement.x)   ; the authenticator's keyA
 
 | Purpose | Algorithm | Notes |
 |---|---|---|
-| Business signatures, attestation signatures | Ed25519 (RFC 8032) | Signatures MUST verify under RFC 8032; how they are computed is not specified (§8.6). Public keys received from outside are rejected if non-canonical or unsafe (small-order points or points outside the prime-order subgroup) |
+| Business signatures, attestation signatures | Ed25519 (RFC 8032) | Any computation that yields signatures verifying under RFC 8032 conforms (§8.6). Verification rules below. Public keys received from outside MUST be safe public keys (§3.1) |
 | Digest | SHA-256 | |
 | KERI next key commitment / E encoding | BLAKE3-256 | As defined by KERI |
 | PIN protocol | [CTAP PIN/UV Auth Protocol Two][ctap-pinproto2] (P-256 ECDH, HKDF-SHA-256, AES-256-CBC, HMAC-SHA-256) | §7.2 |
 
 Each purpose has one fixed algorithm; algorithms are not negotiated.
+
+**Ed25519 verification.** Every party that verifies a VCAP signature (the authenticator for TrustConfig and Tickets; platforms and enterprises for StateProof, Signed and `deviceSig`) MUST verify per RFC 8032 §5.1.7 with these additional rules, so that all implementations accept exactly the same signatures:
+
+1. `S` MUST be less than the group order `L`; otherwise the signature is invalid.
+2. `R` and the public key `A` MUST be canonical encodings of points; `A` MUST be a safe public key.
+3. The cofactorless equation `[S]B = R + [k]A` is used.
+
+**KERI encoding.** VCAP 1.0 signs KERI 1.0 events in JSON serialization only (version string `KERI10JSON`); §8.4.3 defines the accepted event syntax.
 
 ### 6.5 Signature Domains
 
@@ -382,7 +429,7 @@ Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and ar
 | 0x71 | UploadChunk | `{1:offset,2:bytes_bstr}` | SIGN | No | Empty | No |
 | 0x72 | UploadEnd | `{}` | SIGN | **Yes** | Signed | No |
 
-GetInfo and Reset carry no parameter map, as in CTAP.
+GetInfo and Reset carry no parameter map, as in CTAP. The VCAP-wrapped forms of 0x01 and 0x02 exist only on an authenticator that implements the WebAuthn route (§7.14).
 
 Commands that require a token permission append two keys after the business parameters: `254` = **pinUvAuthProtocol** (fixed at 2) and `255` = **pinUvAuthParam** (32 bytes, §8.1). Parameters below are written as `254:2, 255:pinUvAuthParam_b32`.
 
@@ -407,17 +454,17 @@ For each completely reassembled request, the authenticator performs the followin
 
 ### 7.1 GetInfo (0x04)
 
-GetInfo is [CTAP authenticatorGetInfo][ctap-getinfo]. The request and the encoding of the response are as CTAP defines them, and the response is public, unsigned and changes no state. VCAP fixes the following member values:
+GetInfo is [CTAP authenticatorGetInfo][ctap-getinfo]. The request and the encoding of the response are as CTAP defines them, and the response is public, unsigned and changes no state. VCAP fixes the following member values; every other member is set as CTAP 2.3 defines it for the features the product implements, including `aaguid`, which identifies the product model:
 
 | Key | Name | VCAP value |
 |---:|---|---|
-| 0x01 | versions | `["FIDO_2_0", "FIDO_2_1", "FIDO_2_3"]` |
+| 0x01 | versions | `["FIDO_2_3", "VCAP_1_0"]`. `"VCAP_1_0"` announces this protocol; platforms detect VCAP support from it |
 | 0x04 | options | `clientPin` as CTAP; `pinUvAuthToken`: true; `noMcGaPermissionsWithClientPin` absent, so browsers obtain `mc` / `ga` tokens with the PIN |
 | 0x05 | maxMsgSize | 2048 |
 | 0x06 | pinUvAuthProtocols | `[2]` |
-| 0x08 | maxCredentialIdLength | 1023 (the largest VCAPREQ, §7.14.5) |
-| 0x09 | transports | `["nfc", "usb"]` |
-| 0x0A | algorithms | ES256 (-7) and EdDSA (-8) for standard operations; `VCAP_ALG` (-65700) for VCAP-wrapped operations (§7.14) |
+| 0x08 | maxCredentialIdLength | At least 1023 (the largest VCAPREQ, §7.14.5) when the WebAuthn route is implemented; otherwise as the product supports |
+| 0x09 | transports | Exactly the transports implemented: `"usb"` (CTAPHID, §11.2), `"nfc"` (§11.3), `"smart-card"` (CCID, §11.4) |
+| 0x0A | algorithms | ES256 (-7) and EdDSA (-8) for standard operations; in addition `VCAP_ALG` (-65700) when the WebAuthn route is implemented (§7.14) |
 | 0x0C | forcePINChange | Set by Personalize when the PIN is shorter than TrustConfig `minPinChars` (§7.11) |
 | 0x0D | minPINLength | TrustConfig `minPinChars`; 4 before personalization |
 | 0x18 | longTouchForReset | true: Reset requires a 5-second hold (§7.12) |
@@ -447,9 +494,9 @@ The authenticator performs the following steps:
 3. Zeroize the context of this transport per §8.8; the persistent KEL head and prepared key are kept.
 4. Return `OK`.
 
-Cancel requires neither a token nor UP. A successful Cancel **does not prove** that an earlier command was not committed.
+Cancel requires neither a token nor UP. The platform determines the outcome of any earlier command per §12.3.
 
-> Note: while waiting for UP, the authenticator is inside the current command (§8.2), so a Cancel command cannot arrive on the same transport during that time. Cancellation during the wait uses the transport: `CTAPHID_CANCEL` over USB (§11.2), removal from the field over NFC (§11.3), or a UP timeout.
+> Note: while waiting for UP, the authenticator is inside the current command (§8.2), so a Cancel command cannot arrive on the same transport during that time. Cancellation during the wait uses the transport: `CTAPHID_CANCEL` over USB HID (§11.2), removal from the field over NFC (§11.3), ICC power-off over CCID (§11.4), or a UP timeout.
 
 ### 7.4 GetState (0x50)
 
@@ -562,15 +609,15 @@ The authenticator performs the following steps (**BEGIN phase**):
 3. If not personalized, return `INVALID_STATE`.
 4. Read the slot's persistent state and verify its integrity (including keys and, where needed, prepared); on failure return `RECOVERY_REQUIRED`.
 5. Verify the Ticket per §8.3, obtaining `originalLength`, `originalDigest` and `signCounter`.
-6. Pre-check persistent storage space per §8.7 (insufficient: `NO_SPACE`). If `kind` is a KEL kind (1..3), perform the key event pre-checks of §8.4.1. Otherwise, require the slot to be ACTIVE (else `INVALID_STATE`) and select the corresponding format check of §8.5.
+6. If `kind` is not allowed for the slot's owner (column "Allowed owner" above), return `OPERATION_DENIED`. Pre-check persistent storage space per §8.7 (insufficient: `NO_SPACE`). If `kind` is a KEL kind (1..3), perform the key event pre-checks of §8.4.1. Otherwise, require the slot to be ACTIVE (else `INVALID_STATE`) and select the corresponding format check of §8.5.
 7. Select the signing seed: old.next for ROT, current otherwise.
-8. Initialize the signer with the selected key (§8.6).
+8. Prepare to sign with the selected key (§8.6).
 9. Confirm again that the transport is still connected and no deadline has passed.
 
 (**Data phase**)
 
 10. Inline form: if `len(original) ≠ originalLength`, return `INVALID_LENGTH`. Upload form: received chunk by chunk per §7.9.2.
-11. Feed original into the parser, `H(original)` and the signer.
+11. Process original: parse it per §8.4.2 or §8.5, compute `H(original)`, and include it in the signature computation (§8.6).
 
 (**END phase**)
 
@@ -584,7 +631,7 @@ The authenticator performs the following steps (**BEGIN phase**):
 19. Commit atomically per §8.7: the signature counter becomes `signCounter`, `lastSigned` records this signature, and for KEL kinds the slot's latest (and keys, for ROT) advance.
 20. Return Signed: `{1:signature, 2:actualPublic, 3:originalDigest, 4:originalLength, 5:signCounter}`.
 
-Any failed step zeroizes the signer, the parser and the whole context; when step 16 returns USER_ACTION_TIMEOUT, only the signer, parser and upload state are cleared and the context and token are kept (§10.2). The signature MUST NOT leave the authenticator in any form before step 19 completes.
+Any failed step zeroizes the signing state, the parser and the whole context; when step 16 returns USER_ACTION_TIMEOUT, only the signing state, parser and upload state are cleared and the context and token are kept (§10.2). The signature MUST NOT leave the authenticator in any form before step 19 completes.
 
 ### 7.8 Recover (0x56)
 
@@ -628,7 +675,7 @@ The authenticator performs the following steps:
 1. If no upload is in progress, return `UPLOAD_INVALID`.
 2. Authenticate per §8.1 (SIGN).
 3. If `offset ≠ received` or `offset + len(bytes) > declared length`, return `UPLOAD_INVALID`.
-4. Feed bytes into the parser, digest and signer; an error detected immediately by the parser returns `INVALID_KERI_EVENT`.
+4. Process bytes as in §7.7 step 11; an error detected immediately by the parser returns `INVALID_KERI_EVENT`.
 5. received += len(bytes).
 6. Return empty success.
 
@@ -646,7 +693,7 @@ The authenticator performs the following steps:
 
 ### 7.10 BindEnterprise (0x63)
 
-Binds a factory-state device to an enterprise tenant and enterprise root key. The first binding fixes the enterprise root key; this command MUST be executed in a controlled environment (§12.5).
+Binds a factory-state device to an enterprise tenant and enterprise root key. The first binding fixes the enterprise root key permanently; the enterprise performs it during enrollment per §12.5.
 
 **Parameters:** `{1:tenant_b32, 2:enterpriseRoot_b32}`; no token authentication. **UP:** yes. **Result:** empty; the context is closed on success.
 
@@ -655,7 +702,7 @@ The authenticator performs the following steps:
 1. Require a current context established by getKeyAgreement, otherwise `PUAT_REQUIRED`.
 2. Validate the parameter key set and lengths.
 3. If the lifecycle is not STOCK_UNBOUND, return `INVALID_STATE`.
-4. enterpriseRoot MUST be a safe public key (canonical encoding, not small-order, in the prime-order subgroup) distinct from the attestation key; otherwise return `INVALID_PARAMETER`.
+4. If enterpriseRoot is not a safe public key (§3.1) or equals the attestation public key, return `INVALID_PARAMETER`.
 5. Collect one UP per §8.2.
 6. Confirm that the context is still valid and the transport is still connected.
 7. Atomically commit the binding record: tenant, enterpriseRoot, personalized=0.
@@ -673,8 +720,8 @@ The authenticator performs the following steps:
 
 1. Require a current context, otherwise `PUAT_REQUIRED`.
 2. If the lifecycle is not ENTERPRISE_BOUND, return `INVALID_STATE`.
-3. Decode the envelope per §9.1; verify `"VCAP-TRUST\0" ‖ body` with the enterpriseRoot in the binding record; on failure return `TICKET_INVALID`.
-4. Validate body: version 2; device, tenant and resetEpoch match this device; ownerMask, minPinChars, roles and webauthnRpIds valid per §9.1 (keyIds in increasing byte order, public keys distinct from each other and from the enterprise root key and attestation key, safe public keys, capability bits only in the valid combinations of Appendix B). On mismatch return `TICKET_INVALID` or `INVALID_PARAMETER`.
+3. Decode the envelope per §9.1; verify `"VCAP-TRUST\0" ‖ body` with the enterpriseRoot in the binding record; on failure return `CONFIG_INVALID`.
+4. Validate body: version 2; device, tenant and resetEpoch match this device; ownerMask, minPinChars, roles and webauthnRpIds valid per §9.1 (keyIds in increasing byte order, public keys distinct from each other and from the enterprise root key and attestation key, safe public keys, capability bits only in the valid combinations of Appendix B). A device, tenant or resetEpoch mismatch returns `CONFIG_INVALID`; any other violation returns `INVALID_PARAMETER`.
 5. Pre-check persistent storage space; if insufficient, return `NO_SPACE`.
 6. Collect one UP per §8.2.
 7. Confirm that the context is still valid and the transport is still connected.
@@ -694,7 +741,7 @@ Reset has the code, power-up window and UP requirement of [CTAP authenticatorRes
 #### 7.12.1 Authenticator Processing Steps
 
 1. If the request carries any byte after the command byte, return `INVALID_LENGTH`.
-2. If more than 10 000 ms have passed since this power-up, return `NOT_ALLOWED`.
+2. If more than 10 000 ms have passed since this power-up, return `NOT_ALLOWED`. Power-up is the moment the authenticator is powered: USB attachment, or entry into an NFC field. A CCID ICC power-on is not a power-up.
 3. Reset is available in every lifecycle state. In RECOVERY_REQUIRED, if the binding record (tenant, enterpriseRoot, resetEpoch) or the attestation identity cannot be read and verified, return `RECOVERY_REQUIRED`: Reset cannot keep a binding it cannot read, and MUST NOT return the authenticator to STOCK_UNBOUND.
 4. Determine the set of secrets to destroy: always the PIN record, all private keys of the four slots including pre-rotation historical keys, `handleKey` (§7.14.3), and all FIDO credentials (§7.13).
 5. Collect one UP per §8.2 with **hold = 5000 ms**; on timeout return `USER_ACTION_TIMEOUT`.
@@ -734,15 +781,17 @@ The authenticator is also a FIDO2 authenticator. It implements [authenticatorMak
 
 These operations follow CTAP, with the following VCAP rules:
 
-1. **Separate key material.** FIDO credentials are generated and stored separately from the four KERI slots. A FIDO credential key never signs through a VCAP operation. A slot key signs only KERI messages and agent claims through the VCAP operations (§7.7, §7.14), and never signs authenticator data or client data.
+1. **Separate key material.** FIDO credentials are generated and stored separately from the four KERI slots. A FIDO credential key MUST NOT sign through a VCAP operation. A slot key MUST sign only KERI messages and agent claims through the VCAP operations (§7.7, §7.14), and MUST NOT sign authenticator data or client data.
 2. **Lifecycle.** Standard operations are available in every lifecycle state, independent of enterprise binding and personalization. In RECOVERY_REQUIRED they return `RECOVERY_REQUIRED` (§5.1).
 3. **PIN and tokens.** The employee's single PIN serves both. A token obtained for CTAP permissions (`mc`, `ga`, …) authenticates CTAP operations as CTAP defines; a context whose token carries only CTAP permissions is never held (§5.3).
 4. **User presence.** UP is collected per §8.2, so an NFC tap counts as one UP and a sensor press is required otherwise.
 5. **Attestation.** Attestation for FIDO credentials MUST NOT use the VCAP attestation key, which identifies a single device. It uses batch attestation shared by a large population of devices, or self attestation.
 6. **Reset.** Reset (§7.12) erases all FIDO credentials together with the KERI slots.
-7. **Credential IDs.** Credential IDs of FIDO credentials never begin with `"VH1"` or `"VQ1"`, so they cannot be mistaken for slot handles or VCAP requests (§7.14).
+7. **Credential IDs.** Credential IDs of FIDO credentials MUST NOT begin with `"VH1"` or `"VQ1"`, the prefixes of slot handles and VCAP requests (§7.14).
 
 ### 7.14 VCAP Operations over WebAuthn
+
+This section defines an optional feature (§2.1). An authenticator MAY implement it; one that does not lists no `VCAP_ALG` in GetInfo and processes every authenticatorMakeCredential and authenticatorGetAssertion per §7.13. The route depends on browser and platform behavior that is still being validated (VAF §13), and its encoding may change in a later version.
 
 A web page can invoke CreateIdentity, Sign, proof-mode GetState, PrepareRotation and Recover through the standard WebAuthn API, with no software on the platform other than the browser. The browser carries the request to the authenticator as an ordinary authenticatorMakeCredential or authenticatorGetAssertion. The authenticator recognizes a VCAP request by a private COSE algorithm identifier and by payloads placed in fields that clients forward unchanged, and returns the result in fields that clients return to the page unchanged.
 
@@ -765,7 +814,8 @@ For an RP ID outside `webauthnRpIds`, the authenticator treats `VCAP_ALG` as uns
 - A wrapped request **MUST** carry `pinUvAuthParam`, verified as CTAP specifies for the command, with a token holding the CTAP permission `mc` (for authenticatorMakeCredential) or `ga` (for authenticatorGetAssertion) and, where the token is bound to an RP ID, bound to this rpId. Otherwise the authenticator returns `PUAT_REQUIRED` or the corresponding CTAP error. The context and token deadlines of §8.1 step 4 apply.
 - These CTAP permissions take the place of READ, SIGN and MANAGE on this route; the operation is limited to the slot named by the request.
 - Every wrapped request with `up` true collects one new UP per §8.2, regardless of any user-presence state carried by the token. Read-only operations (GetState, Recover) also collect UP on this route, because the client requires it.
-- The lifecycle must be PIN_READY; RECOVERY_REQUIRED returns `RECOVERY_REQUIRED` (§5.1).
+- The lifecycle MUST be PIN_READY; otherwise the authenticator returns `INVALID_STATE`, or `RECOVERY_REQUIRED` in RECOVERY_REQUIRED (§5.1).
+- In a StateProof produced on this route, `authState.permissions` reports the VCAP permissions the operation stands in for: READ|MANAGE for CreateIdentity, READ for GetState, READ|SIGN for PrepareRotation.
 
 #### 7.14.3 Slot Handle
 
@@ -819,7 +869,7 @@ request = {1:op, 2:slotHandle, ? 3:kind, ? 4:ticket_bstr, ? 5:original_bstr, ? 6
 | 3 | PrepareRotation | none | §7.6 steps 2–8, `challenge = clientDataHash` | StateProof |
 | 4 | Recover | 6 | §7.8 steps 2–6 | Signed |
 
-The slot is the one named by `slotHandle`. A message that does not fit in VCAPREQ is signed through the native route with the upload commands (§7.7, §7.9).
+The slot is the one named by `slotHandle`. The largest message on this route is therefore `1023 − 3 − len(CBOR(request))` with `original` counted as an empty bstr; with a typical Ticket of about 180 bytes this leaves roughly 780 bytes. A message that does not fit in VCAPREQ is signed through the native route with the upload commands (§7.7, §7.9).
 
 The authenticator performs the following steps:
 
@@ -866,7 +916,7 @@ The authenticator performs the following steps:
 
 Notes:
 
-- Replay protection comes from binding each command to contextId and the token; there is no separate session, sequence number or replay cache.
+- Binding each command to contextId and the token confines it to its context: an authenticated command cannot be replayed into another context. There is no sequence number or replay cache; within one context, single use of Tickets comes from the signature counter (§8.3) and freshness of StateProofs from their challenges.
 - Each UploadChunk is authenticated independently, so authentication covers its offset and bytes.
 - Successful authentication shows only that the request comes from the platform holding the token; Ticket, UP and commit eligibility are checked separately.
 
@@ -876,25 +926,25 @@ Inputs: `hold_ms` (0 for ordinary operations, 5000 for Reset), the current trans
 
 The authenticator performs the following steps:
 
-1. If the transport is NFC, `hold_ms` is 0, and the tap of the current field session has not been consumed (§11.3), mark it consumed and return success.
-2. Turn on the presence indicator; turn it off however this procedure ends.
+1. If the transport is NFC, `hold_ms` is 0, and the tap of the current field session has not been consumed (§11.3), mark it consumed and return success. Over USB HID and CCID there is no tap; UP always comes from the sensor.
+2. Turn on the presence indicator; turn it off however this procedure ends. The authenticator MUST have a touch sensor and a visible presence indicator light that is lit only while it waits for UP.
 3. Record the start time `t0`. Let `hold = max(hold_ms, 30)`.
 4. Loop until a result is reached:
    1. If the transport has been disconnected, return `OPERATION_DENIED`.
    2. If the transport reports a cancellation (`CTAPHID_CANCEL`, §11.2), return `KEEPALIVE_CANCEL`.
    3. If a `deadline` is set and has passed, return `PIN_TOKEN_EXPIRED`.
    4. If `now − t0 ≥ 30 000 ms`, stop waiting and return `USER_ACTION_TIMEOUT`.
-   5. Release detection: a touch already held when the request starts does not count; the sensor MUST first be released and stay released for ≥ 30 ms.
-   6. Press detection: a subsequent new press held for ≥ `hold` is accepted; a release before then returns to waiting for a press.
+   5. Release detection: a touch already held when the request starts does not count; the sensor MUST first be released and stay released for at least 30 ms.
+   6. Press detection: a subsequent new press held for at least `hold` is accepted; a release before then returns to waiting for a press.
 5. On acceptance, return success.
 
 Rules:
 
-- Each UP-requiring request consumes its own new sensor press or its own NFC tap. Over NFC one tap satisfies at most one request; a further UP-requiring request in the same field session needs a sensor press or a new tap. A press or tap is never latched or reused, and a signature is never retried automatically.
+- Each UP-requiring request consumes its own new sensor press or its own NFC tap. Over NFC one tap satisfies at most one request; a further UP-requiring request in the same field session needs a sensor press or a new tap. The authenticator MUST NOT latch or reuse a press or tap, and a platform MUST NOT retry a signature automatically.
 - Reset (`hold_ms` = 5000) always requires the sensor to be held; an NFC tap never satisfies it.
-- While waiting, the authenticator stays in the current command and reports progress as the transport defines (CTAPHID keepalive, §11.2; NFC status polling, §11.3).
+- While waiting, the authenticator stays in the current command and reports progress as the transport defines (CTAPHID keepalive, §11.2; status polling over NFC, §11.3, and CCID, §11.4).
 - The effective wait window is min(30 s, remaining context time). Sign / UploadEnd is itself a use of the token, so the UP wait is unaffected by the initial usage time limit. If the user does not touch within 30 s, `USER_ACTION_TIMEOUT` is returned and the token remains valid; the platform MAY start the signature again without asking for the PIN again.
-- UP proves that someone present approved one operation; it does not prove that the user saw the message content. An NFC tap is a weaker signal than a sensor press, since it can also come from leaving the authenticator on the reader (§13.2).
+- UP establishes that someone present approved one operation; review of the message content takes place off-device (§13.2). An NFC tap is a weaker signal than a sensor press, since it can also come from leaving the authenticator on the reader.
 
 ### 8.3 Verifying a Ticket
 
@@ -936,17 +986,37 @@ The authenticator keeps no record of used Tickets: the signature counter makes e
 
 The authenticator performs the following checks while receiving the message (single pass):
 
-1. The message is one complete JSON object within the length limit, with no duplicate top-level keys and no trailing bytes.
+1. The message is one complete JSON object within the length limit that satisfies the event syntax of §8.4.3, with no duplicate keys and no trailing bytes.
 2. The size field of the version string `v` equals the total message length.
 3. `t` equals the event type for the kind (`icp` / `ixn` / `rot`).
 4. `d`, `i` and `p` (IXN / ROT) are 44 bytes with an `E` prefix and satisfy the expected values of §8.4.1.
 5. `s` equals the expected sequence number.
-6. ICP / ROT: `k` has exactly 1 entry, equal to the qb64 of the signing public key; `kt="1"`; `n` has exactly 1 entry, equal to the BLAKE3 digest commitment of the next key (next for ICP, newNext for ROT); `nt="1"`.
+6. ICP / ROT: `k` has exactly 1 entry, equal to `qb64("D", signing public key)`; `kt="1"`; `n` has exactly 1 entry, equal to `commit(next key)` (next for ICP, newNext for ROT) per §6.2; `nt="1"`.
 7. Delegated event types (`dip` / `drt`) are rejected.
 
 A format or field mismatch returns `INVALID_KERI_EVENT`; a key, commitment or AID mismatch returns `KEY_BINDING`.
 
 SAID computation, witnesses, delegation and network acceptance are verified in full by the enterprise (§12.8).
+
+#### 8.4.3 KERI Event Syntax
+
+The authenticator accepts KERI 1.0 events in JSON serialization with the following syntax, and rejects any other message with `INVALID_KERI_EVENT`. Platforms MUST produce events in this form.
+
+1. The message is valid UTF-8 and a JSON text per RFC 8259 with no insignificant whitespace: no space, tab, line feed or carriage return outside string values.
+2. The top-level object has exactly the following fields, in this order:
+
+   | Event | Fields |
+   |---|---|
+   | `icp` | `v`, `t`, `d`, `i`, `s`, `kt`, `k`, `nt`, `n`, `bt`, `b`, `c`, `a` |
+   | `ixn` | `v`, `t`, `d`, `i`, `s`, `p`, `a` |
+   | `rot` | `v`, `t`, `d`, `i`, `s`, `p`, `kt`, `k`, `nt`, `n`, `bt`, `br`, `ba`, `a` |
+   | `exn` | `v`, `t`, `d`, `i` first, in this order; further fields as KERI defines |
+   | `rpy` | `v`, `t`, `d` first, in this order; further fields as KERI defines |
+
+3. `v` is exactly `"KERI10JSON"` followed by six lowercase hexadecimal digits and `"_"`; the digits give the total message length in bytes.
+4. `s` and `bt` are lowercase hexadecimal strings without leading zeros (`"0"` for zero); `s` has at most 16 digits.
+5. The string values of `v`, `t`, `d`, `i`, `s`, `p`, `kt`, `nt` and the entries of `k` and `n` contain no backslash escape.
+6. The values of `b`, `c`, `a`, `br`, `ba` and the further fields of `exn` and `rpy` are well-formed JSON values; the authenticator checks only their well-formedness.
 
 ### 8.5 Non-KEL Format Checks
 
@@ -963,22 +1033,31 @@ Complete JSON; total length matches `v`; `t="rpy"`. Route, identity and business
 #### 8.5.3 AGENT (kind 6, CLIENT)
 
 ```
-original = "VCAP-AGENT-SESSION\0" ‖ kind_u8 ‖ AID_raw44 ‖ body
-body     = CBOR([1, receiver, nonce_b32, issued, expires, claims_bstr])
-claims   = CBOR({1:walletProfile_tstr})   ; wallet operation profile identifier, verified by the enterprise
+original = "VCAP-AGENT-SESSION\0" ‖ 0x06 ‖ aid_t44 ‖ body
+body     = CBOR([1, receiver_tstr, nonce_b32, issued, expires, claims_bstr])
+claims   = CBOR({1:walletProfile_tstr})
 ```
 
-The authenticator checks: the domain separation tag, `kind_u8`, that `AID_raw44` equals this slot's AID, that the total length is ≤ 512 and equals the Ticket's originalLength, and the Ticket digest. The body is opaque to the authenticator; the enterprise verifies claims, receiver, nonce and `0 < expires − issued ≤ 300 s`.
+| Field | Content |
+|---|---|
+| `0x06` | The AGENT kind value |
+| `aid_t44` | The slot's AID as 44 bytes of qb64 text |
+| `receiver` | The receiver identifier the enterprise assigned for the AGENT purpose (VCAP-EI §7.5) |
+| `nonce` | 32 random bytes generated by the platform |
+| `issued`, `expires` | uint, seconds since 1970-01-01T00:00:00Z |
+| `walletProfile` | The name of a wallet operation profile (VCAP-EI Appendix C) |
 
-The session authorizes only the reads defined by the wallet operation profile named in `claims`, plus contact modification / deletion, local credential deletion, OOBI resolution, identity renaming and marking notifications as read. It MUST NOT be used to sign KEL events, RPY or EXN on the user's behalf, or to perform Boot or administration.
+The authenticator checks: the domain separation tag, the kind byte, that `aid_t44` equals this slot's AID, that the total length is ≤ 512 and equals the Ticket's originalLength, and the Ticket digest. The body is opaque to the authenticator; the enterprise verifies claims, receiver, nonce and `0 < expires − issued ≤ 300`.
+
+The Agent requests a session permits are exactly those of the wallet operation profile named in `claims`. An enterprise service MUST NOT accept an AGENT session for KEL events, RPY or EXN, for Agent creation, or for administration.
 
 ### 8.6 Signature Computation
 
-The signature is a 64-byte Ed25519 signature over the message, verifiable under RFC 8032 with `actualPublic`. VCAP does not specify how the authenticator computes it, for example how the nonce is generated or how a message received in several chunks is processed. The following properties are required:
+The signature is a 64-byte Ed25519 signature over the message, verifiable under RFC 8032 (§6.4) with `actualPublic`. Any computation with the following properties conforms, including the choice of nonce generation and the processing of a message received in several chunks:
 
-1. The signature is completed only after UP (§7.7 step 18); before that, no signature or value from which one could be completed leaves the authenticator.
-2. The signature is self-verified with `actualPublic` before it is committed; on failure the authenticator returns `INTERNAL`.
-3. The message is never written to persistent storage.
+1. The authenticator MUST complete the signature only after UP (§7.7 step 18); before that, no signature or value from which one could be completed leaves the authenticator.
+2. The authenticator MUST self-verify the signature with `actualPublic` before it is committed, and return `INTERNAL` on failure.
+3. The authenticator MUST NOT write the message to persistent storage.
 
 ### 8.7 Atomic Commit
 
@@ -999,7 +1078,7 @@ Rules:
 1. The written content is determined entirely inside the authenticator.
 2. A signature or StateProof is returned only after the write completes.
 3. After a ROT write, storage is in exactly one of two states: the pre-rotation keys, latest and prepared; or the post-rotation keys and latest (without prepared). Mixed intermediate states are impossible, and one rotation is applied at most once.
-4. A write error or an error response **does not prove** that the write failed.
+4. After a write error or an error response, the platform determines the outcome per §12.3.
 5. Slot state stores latest's kind, seq, said, originalLength, originalDigest and original signature, and `lastSigned` (kind, signCounter, actualPublic, originalLength, originalDigest and signature of the most recent signature of any kind), for use by §7.8.
 6. ROT is not required to destroy pre-rotation private keys; until Reset, an attacker able to read the raw storage medium may recover historical keys. Only Reset guarantees that they are unrecoverable (§13.1).
 
@@ -1008,7 +1087,7 @@ Rules:
 The authenticator performs the following steps:
 
 1. Clear the fragment buffer and pending response.
-2. Clear the upload, the signer (including `r` and seed copies) and the parser.
+2. Clear the upload, the signing state (including every intermediate value and key copy) and the parser.
 3. Clear the token, permissions, key agreement private key, shared secret and contextId.
 4. Release the context's binding to its transport.
 
@@ -1017,6 +1096,8 @@ The persistent KEL head and prepared key are kept.
 ---
 
 ## 9. Data Structures
+
+The leading integer of the TrustConfig body, the Ticket body and stateBody is a structure version. Its value 2 is independent of the version of this document.
 
 ### 9.1 TrustConfig
 
@@ -1034,7 +1115,7 @@ webauthnRpIds = [* rpIdHash_b32]
 | ownerMask | Only bit0 (CLIENT) / bit1 (WORK); non-zero |
 | minPinChars | 4..63 (an enterprise MAY choose 8 or more) |
 | roles | 1..8 entries; keyId is 1..16 bytes of UTF-8, in strictly increasing byte order |
-| role.public | Distinct from each other and from the enterprise root key and attestation key; safe public key (canonical encoding, not small-order, in the prime-order subgroup) |
+| role.public | Distinct from each other and from the enterprise root key and attestation key; safe public key (§3.1) |
 | capabilityMask | Only the valid bits of Appendix B; non-zero |
 | webauthnRpIds | 0..4 entries; each is SHA-256 of an enterprise RP ID; strictly increasing byte order. The RP IDs from which VCAP-wrapped operations are accepted (§7.14.1); an empty list disables the WebAuthn route |
 
@@ -1099,13 +1180,13 @@ Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0�
 | 0x01 | INVALID_COMMAND | Unknown command | Fix the implementation |
 | 0x02 | INVALID_PARAMETER | Missing / extra keys, invalid combination, wrong fixed protocol number | Fix the request |
 | 0x03 | INVALID_LENGTH | Length or integer out of range | Fix the request |
-| 0x06 | BUSY | Another transport holds a held context, or an upload is in progress (CTAP1_ERR_CHANNEL_BUSY) | Wait and retry; any existing upload continues |
+| 0x06 | BUSY | Another transport holds a held context, or an upload is in progress (CTAP1_ERR_CHANNEL_BUSY). Returned as the status byte of the VCAP response (§11.1), on every transport | Wait and retry; any existing upload continues |
 | 0x12 | INVALID_CBOR | Encoding, type, ordering, depth or trailing-byte violation | Fix the encoding |
 | 0x27 | OPERATION_DENIED | Owner or permission denied; disconnection during UP; transport replaced during execution | Report as distinct from a PIN error; obtain the user's consent again |
 | 0x28 | NO_SPACE | Insufficient persistent storage | Maintenance |
 | 0x2b | UNSUPPORTED_OPTION | VCAP-wrapped MakeCredential with `rk` true (§7.14.4) | Fix the request |
-| 0x2e | NO_CREDENTIALS | VCAP-wrapped request with an invalid slot handle or VCAPREQ (§7.14) | Obtain a current slot handle |
 | 0x2d | KEEPALIVE_CANCEL | UP wait cancelled by `CTAPHID_CANCEL` | Do not re-sign automatically; reconcile per §12.3 if needed |
+| 0x2e | NO_CREDENTIALS | VCAP-wrapped request with an invalid slot handle or VCAPREQ (§7.14) | Obtain a current slot handle |
 | 0x2f | USER_ACTION_TIMEOUT | UP wait timed out after 30 s (PIN_TOKEN_EXPIRED if the context deadline comes first) | Do not re-sign automatically |
 | 0x30 | NOT_ALLOWED | Reset sent more than 10 s after power-up | Ask the user to reinsert or re-tap the authenticator and retry immediately |
 | 0x33 | PIN_AUTH_INVALID | Command authentication with the token failed (§8.1) | Call getKeyAgreement again and obtain a token |
@@ -1113,14 +1194,15 @@ Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0�
 | 0x38 | PIN_TOKEN_EXPIRED | Token or context deadline passed | Authorize again |
 | 0x7f | INTERNAL | RNG, cryptographic engine or invariant failure | Stop and report |
 | 0xf0 | INVALID_STATE | Lifecycle, slot or operation conditions not met | Query actual state with GetState |
+| 0xf1 | CONFIG_INVALID | TrustConfig signature, device, tenant or reset epoch mismatch (§7.11) | Check the TrustConfig issued for this device and reset epoch |
 | 0xf2 | NOT_FOUND | The slot has no latest event, or required data does not exist | Query actual state |
 | 0xf3 | INVALID_KERI_EVENT | Message parsing or local KEL rules not satisfied | Check the message; for a KEL signature the head may be outdated: establish a new context, GetState, then request a new Ticket |
 | 0xf4 | KEY_BINDING | Actual key, pre-rotation commitment or AID mismatch | Check the message; establish a new context, check the keys with GetState, then request a new Ticket |
-| 0xf5 | TICKET_INVALID | Ticket signature / binding / signature counter mismatch; also TrustConfig signature verification failure | Request a new Ticket, or query actual state |
+| 0xf5 | TICKET_INVALID | Ticket signature / binding / signature counter mismatch | Request a new Ticket, or query actual state |
 | 0xf6 | RECOVERY_REQUIRED | Storage contains unrecognized or corrupted data | Reset (§7.12); offline maintenance if Reset also returns RECOVERY_REQUIRED |
 | 0xf7 | UPLOAD_INVALID | Upload progress, final length / digest or phase error | Start over (new context) |
 
-Codes below 0xF0 are CTAP status codes with their CTAP meaning (BUSY is CTAP1_ERR_CHANNEL_BUSY, NO_SPACE is CTAP2_ERR_KEY_STORE_FULL and INTERNAL is CTAP1_ERR_OTHER). Codes 0xF0 and 0xF2–0xF7 are VCAP-specific codes in the CTAP vendor range; 0xF1 is unassigned.
+Codes below 0xF0 are CTAP status codes with their CTAP meaning (BUSY is CTAP1_ERR_CHANNEL_BUSY, NO_SPACE is CTAP2_ERR_KEY_STORE_FULL and INTERNAL is CTAP1_ERR_OTHER). Codes 0xF0–0xF7 are VCAP-specific codes in the CTAP vendor range.
 
 ### 10.2 Context Zeroization on Error
 
@@ -1128,19 +1210,19 @@ Except for `BUSY` and the `USER_ACTION_TIMEOUT` of Sign / UploadEnd described be
 
 1. An upload is in progress when the error occurs; or
 2. The command is one of CreateIdentity, Sign, PrepareRotation, Personalize, BindEnterprise, Reset, UploadBegin / Chunk / End; or
-3. The status code is one of PIN_AUTH_INVALID, PIN_TOKEN_EXPIRED, INTERNAL, RECOVERY_REQUIRED, TICKET_INVALID, KEEPALIVE_CANCEL.
+3. The status code is one of PIN_AUTH_INVALID, PIN_TOKEN_EXPIRED, INTERNAL, RECOVERY_REQUIRED, TICKET_INVALID, CONFIG_INVALID, KEEPALIVE_CANCEL.
 
-When Sign or UploadEnd returns USER_ACTION_TIMEOUT, the authenticator clears the signer, parser and upload state and keeps the context and token (§8.2). Other errors (for example `INVALID_PARAMETER` from GetState) keep the context. `BUSY` always keeps the current upload and context.
+When Sign or UploadEnd returns USER_ACTION_TIMEOUT, the authenticator clears the signing state, parser and upload state and keeps the context and token (§8.2). Other errors (for example `INVALID_PARAMETER` from GetState) keep the context. `BUSY` always keeps the current upload and context.
 
-### 10.3 Ordinary Errors Are Not Proof
+### 10.3 Status Codes and Commitment
 
-No status code is cryptographically authenticated. A platform MUST NOT automatically retry a PIN or re-sign on the basis of a status code, nor infer from one that a write did not occur.
+Status codes are unauthenticated. A platform determines whether a write occurred only per §12.3, and MUST NOT automatically retry a PIN or re-sign on the basis of a status code.
 
 ---
 
 ## 11. Transport Bindings
 
-VCAP messages are carried over the same transports as CTAP: CTAPHID over USB (§11.2) and the CTAP NFC binding (§11.3). The message encoding (§11.1) is identical on both.
+VCAP messages are carried over the CTAP transports, CTAPHID over USB HID (§11.2) and the CTAP NFC binding (§11.3), and over USB CCID (§11.4), which carries the APDUs of the CTAP NFC binding over a contact smart-card interface. The message encoding (§11.1) is identical on all of them. Each transport is an optional feature (§2.1); an authenticator implements at least one.
 
 ### 11.1 Message Encoding
 
@@ -1152,7 +1234,7 @@ response = status_u8 [‖ CBOR(result)]     ; result appended only when status=O
 - A complete request and a complete response are each ≤ 2048 bytes.
 - The message of a Sign request (≤ 16 384 bytes) is carried inline when the complete request is ≤ 2048 bytes, and otherwise through the upload commands of §7.9.
 - A transport carries one request at a time. A new request arriving before the previous one completes is rejected by the transport (§11.2, §11.3) and is not executed.
-- A transport-level success reports delivery only and is not proof of commitment. The business result is carried only in `status_u8` (Section 10).
+- A transport-level success reports delivery only. The business result is carried in `status_u8` (Section 10), and commitment is established per §12.3.
 
 **Lost responses.** When a response is lost on any transport, the platform **MUST NOT** automatically resend the whole command. It recovers per §12.3:
 
@@ -1161,12 +1243,12 @@ response = status_u8 [‖ CBOR(result)]     ; result appended only when status=O
 - PIN operations: query getPinRetries, then the user repeats the operation.
 - Non-KEL signature: GetState shows whether the slot's counter reached the Ticket's `signCounter`; if it did, Recover returns the signature while no later signature exists.
 
-### 11.2 USB: CTAPHID
+### 11.2 USB HID: CTAPHID
 
 VCAP uses the [CTAPHID binding of CTAP 2.3][ctap-usb] unchanged; a VCAP request and response (§11.1) are the payload of `CTAPHID_CBOR`. The following rules relate it to VCAP:
 
 - One CTAPHID channel (CID) is one transport in the sense of §3.1; a context belongs to the CID on which getKeyAgreement was sent. A `CTAPHID_INIT` on that CID, or USB detachment, zeroizes the context.
-- Once a transaction on another CID has ended, a request from that CID while a held context exists receives the status `BUSY` (§7.0.1 step 1); a context that is not held is zeroized and the request proceeds (§5.3).
+- Once a transaction on another CID has ended, a request from that CID while a held context exists receives a `CTAPHID_CBOR` response whose status byte is `BUSY` (§7.0.1 step 1); a context that is not held is zeroized and the request proceeds (§5.3). A request arriving on any CID while a transaction is in progress receives the CTAPHID-level `ERR_CHANNEL_BUSY` as CTAPHID defines.
 - While waiting for UP the authenticator sends `CTAPHID_KEEPALIVE` with `STATUS_UPNEEDED`. `CTAPHID_CANCEL` ends the wait: the command returns `KEEPALIVE_CANCEL` (§8.2) and the context is zeroized (§10.2).
 
 ### 11.3 NFC
@@ -1178,6 +1260,20 @@ VCAP uses the [NFC binding of CTAP 2.3][ctap-nfc] unchanged, including the FIDO 
 - **Cancellation.** The platform cancels by ending the field session. A Cancel command (§7.3) between two commands remains available.
 - **Leaving the field during a command.** The command ends with power loss and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new field session; an interrupted Reset completes at the next power-up (§7.12.4).
 
+### 11.4 USB CCID
+
+A USB authenticator MAY present a USB CCID interface (USB-IF *Device Class Specification for USB Chip/Smart Card Interface Devices* 1.1, interface class `0x0B`) with one slot holding a permanently present ICC. The ICC carries the APDU layer of the [CTAP NFC binding][ctap-nfc] unchanged: `SELECT` of the FIDO AID, `NFCCTAP_MSG`, command chaining, `GET RESPONSE` and status polling with `NFCCTAP_GETRESPONSE`. A VCAP request and response (§11.1) are the payload of `NFCCTAP_MSG` exactly as over NFC, and the authenticator reassembles requests of at most 2048 bytes. Platforms reach this interface through the operating system's smart-card service (for example PC/SC).
+
+The following rules relate it to VCAP:
+
+- **Card session.** A card session begins with `PC_to_RDR_IccPowerOn` and ends with `PC_to_RDR_IccPowerOff`, USB reset or USB detachment. The card session is one transport. `SELECT` of the FIDO AID and the end of the card session both zeroize the context.
+- **UP.** A card session provides no tap: every UP-requiring request waits for a sensor press (§8.2), and the authenticator reports `STATUS_UPNEEDED` in response to status polling while it waits.
+- **Cancellation.** The platform cancels a UP wait by ending the card session. A Cancel command (§7.3) between two commands remains available.
+- **Ending the card session during a command.** The command ends and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new card session.
+- **Reset window.** The 10-second window of §7.12.1 step 2 runs from USB attachment; an ICC power-on does not reopen it.
+- **Coexistence.** An authenticator that presents both a CTAPHID interface and a CCID interface treats each CTAPHID channel and the card session as separate transports, and applies §5.3 between them.
+- **ATR.** The answer-to-reset is product-defined; platforms identify the authenticator by a successful `SELECT` of the FIDO AID followed by GetInfo `versions` containing `"VCAP_1_0"`.
+
 ---
 
 ## 12. Platform and Enterprise Procedures
@@ -1188,12 +1284,13 @@ This section specifies the steps that platforms and enterprises **MUST** follow 
 
 The platform performs the following steps:
 
-1. Open the transport: allocate a CTAPHID channel (§11.2), or `SELECT` the FIDO AID over NFC (§11.3).
+1. Open the transport: allocate a CTAPHID channel (§11.2), or `SELECT` the FIDO AID over NFC (§11.3) or in a CCID card session (§11.4). Confirm that GetInfo `versions` contains `"VCAP_1_0"`.
 2. Send ClientPIN getKeyAgreement to obtain the authenticator's keyAgreement; compute contextId per §6.3; generate a new ephemeral P-256 key as the platform keyAgreement for subsequent subcommands.
 3. Ask the user for the PIN and request, in one call, all permissions the operation needs (for example `READ|SIGN` for signing) with getPinUvAuthTokenUsingPinWithPermissions.
 4. Decrypt pinUvAuthToken to obtain the token. The PIN, pinHash, shared secret and token MUST NOT be logged; the PIN entered by the user MUST be cleared on completion, cancellation, backgrounding or unload.
 5. When token permissions, device identity or slot state need confirmation, check `authState.permissions` and slot state with GetState (with a challenge); for a normal signature, decide per §12.2 step 0.
 6. Reuse a valid token for subsequent commands; ask for the PIN again only after expiry, disconnection, permission escalation or revocation. A platform MUST NOT keep the token alive with idle background authentication or cache the PIN to renew it.
+7. A context whose token carries a VCAP permission is held (§5.3) and blocks other clients of the authenticator, including browsers performing WebAuthn sign-in. When the platform has no further operation to perform, it SHOULD release the context with Cancel (§7.3) or by closing the transport.
 
 After a PIN error (`PIN_INVALID`) the context has been zeroized; the platform MUST restart from step 2, first showing the user the balance from getPinRetries, and MUST NOT retry automatically.
 
@@ -1233,25 +1330,25 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 
 1. When the user cancels while waiting for UP or during an upload, the platform disconnects the transport (or sends Cancel between two commands).
 2. The authenticator zeroizes the context; prepared and committed heads are kept.
-3. If a signature may have been committed, Cancel does not prove a rollback: reconcile read-only per §12.3.
+3. If a signature may have been committed, the platform reconciles read-only per §12.3.
 
 ### 12.5 Initial Onboarding (Factory to First Identity)
 
 | Step | Actor | Authenticator command | UP |
 |---|---|---|---|
 | 1 | Manufacturer | Manufacturing tool creates STOCK, generates attestation identity and issues the certificate chain (offline) | — |
-| 2 | Enterprise IT (controlled environment) | Verify the certificate chain and register the attestation public key → getKeyAgreement → BindEnterprise(tenant, enterprise root key) | 1 |
+| 2 | Enterprise IT | Verify the certificate chain (Appendix D) and register the attestation public key → confirm with status-mode GetState that the lifecycle is STOCK_UNBOUND → getKeyAgreement → BindEnterprise(tenant, enterprise root key) | 1 |
 | 3 | Enterprise IT | getKeyAgreement → Personalize(TrustConfig) | 1 |
 | 4 | Employee | getKeyAgreement → setPIN | 0 |
 | 5 | Employee | getKeyAgreement → obtain token (READ\|MANAGE\|SIGN) → CreateIdentity(CLIENT) | 0 |
 | 6 | Employee | GetState → enterprise issues Ticket → Sign(ICP, CLIENT) | 1 |
-| 7 | Enterprise | Perform `/boot` with the archived CLIENT icp and its original signature (no additional device signature needed) | 0 |
+| 7 | Enterprise | Create the employee's agent from the archived CLIENT icp and its original signature (for KERIA, the boot request); no additional device signature is needed | 0 |
 | 8 | Employee | Sign(IXN, CLIENT): Agent approval | 1 |
 | 9 | Employee | CreateIdentity(WORK) → Sign(ICP, WORK) | 1 |
 | 10 | Employee | Sign(RPY, WORK): Agent end-role | 1 |
 | 11 | Employee | Sign(AGENT, CLIENT): limited read/write session | 1 |
 
-IT MUST NOT preset or upload employee private keys. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before calling KERIA to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
+The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before calling KERIA to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
 
 ### 12.6 Rotation (WORK)
 
@@ -1265,9 +1362,11 @@ IT MUST NOT preset or upload employee private keys. In step 7, the enterprise SH
 ### 12.7 Reset and the New Reset Epoch
 
 1. The enterprise decides on a Reset (departure, lost device, blocked PIN, etc.) and, on the enterprise side, deactivates the old CLIENT / WORK AIDs and stops issuing Tickets for the old reset epoch. Reset also erases the employee's FIDO credentials, so relying parties that registered them need re-registration.
-2. Reinsert or re-tap the authenticator and send Reset within 10 s of power-up; the user holds the touch for 5 seconds. No PIN is needed, so Reset also works after the PIN is blocked. Generic FIDO clients (browser or operating system settings) can also send Reset and prompt only for a touch; enterprise guidance SHOULD tell users that Reset requires a 5-second hold and erases all identities on the authenticator.
+2. Reinsert (USB) or re-tap (NFC) the authenticator and send Reset within 10 s of power-up (§7.12.1 step 2); the user holds the touch for 5 seconds. No PIN is needed, so Reset also works after the PIN is blocked. Generic FIDO clients (browser or operating system settings) can also send Reset and prompt only for a touch; enterprise guidance SHOULD tell users that Reset requires a 5-second hold and erases all identities on the authenticator.
 3. On success the authenticator returns to ENTERPRISE_BOUND (resetEpoch+1); IT personalizes again, and the employee sets a PIN and onboards again.
 4. The authenticator SHOULD stay connected during Reset; if Reset is interrupted, the authenticator completes it at the next power-up.
+
+A Reset ends the continuity of every AID on the authenticator in the same way as loss of the device; VAF §6.5 specifies the resulting enterprise and credential obligations.
 
 ### 12.8 Enterprise Ticket Issuance Requirements
 
@@ -1286,7 +1385,7 @@ The enterprise Ticket issuer MUST:
 
 ### 12.9 Browser Procedures
 
-These procedures use the WebAuthn route of §7.14 from a page served on an RP ID listed in `webauthnRpIds`. The browser performs the PIN exchange and context handling of §12.1; the page handles no PIN or token.
+These procedures apply to authenticators that implement the WebAuthn route (§7.14) and use it from a page served on an RP ID listed in `webauthnRpIds`. The browser performs the PIN exchange and context handling of §12.1; the page handles no PIN or token.
 
 #### 12.9.1 Creating an Identity
 
@@ -1329,8 +1428,9 @@ When `get()` fails or the page is closed before the result is archived, the ente
 2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY (`dt`) and AGENT (`expires`) carry their own validity that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, or Resets the authenticator.
 3. **NFC tap as UP:** over NFC the tap satisfies UP for one request per field session. A compromised platform that holds a valid PIN token and Ticket can use the user's next tap for its own request, just as it can use a sensor press; a tap also happens when the authenticator is left on a reader. Enterprise approval of the message content remains the control.
 4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.13), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
-5. **Web origins on the WebAuthn route:** any page served from an RP ID listed in `webauthnRpIds` can request VCAP-wrapped operations once the user enters the PIN and touches. CreateIdentity needs no Ticket, so such a page can take an UNUSED slot; Sign still needs a Ticket. The enterprise lists only RP IDs whose pages it controls. Pages on other RP IDs cannot detect the VCAP function: the authenticator answers them as a security key without it (§7.14.1).
+5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform, or any page served from an RP ID listed in `webauthnRpIds`, can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8). The enterprise lists only RP IDs whose pages it controls. Pages on other RP IDs cannot detect the VCAP function: the authenticator answers them as a security key without it (§7.14.1).
 6. **Browser compatibility:** the WebAuthn route depends on browsers and platform authenticator APIs forwarding the private algorithm identifier, credential IDs of up to 1023 bytes and an opaque `signature` unchanged. Where a platform does not, the native route (§7.4–§7.12) remains available.
+7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility and is accepted in VCAP 1.0; enterprise guidance tells users what Reset erases (§12.7).
 
 ### 13.3 PIN
 
@@ -1347,7 +1447,9 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 
 | Constant | Value |
 |---|---|
-| NFC AID | `A0 00 00 06 47 2F 00 01` (FIDO) |
+| FIDO AID (NFC and CCID) | `A0 00 00 06 47 2F 00 01` |
+| GetInfo version string | `"VCAP_1_0"` |
+| KERI serialization | KERI 1.0 JSON (`KERI10JSON`) |
 | Complete request / response limit | 2048 bytes |
 | KERI message limit (kind 1..5) | 16 384 bytes |
 | AGENT message limit (kind 6) | 512 bytes |
@@ -1361,12 +1463,12 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | Reset power-up window | 10 000 ms |
 | UP debounce (release) | 30 ms |
 | UP hold duration | Ordinary 30 ms (hold 0); Reset 5000 ms |
-| NFC tap as UP | At most one UP-requiring request per field session; never for Reset |
+| NFC tap as UP | At most one UP-requiring request per field session; never for Reset; no tap over USB HID or CCID |
 | PIN length | 1..63 bytes; minPinChars 4..63 |
 | Number of slots | 4 |
 | TrustConfig roles | 1..8; keyId 1..16 bytes |
 | TrustConfig webauthnRpIds | 0..4 |
-| VCAP_ALG | -65700 (COSE, private use) |
+| VCAP_ALG | -65700 (COSE, private use; WebAuthn route only, provisional) |
 | VCAPREQ | ≤ 1023 bytes |
 | Slot signature counter | 0..2^32−1 |
 | CBOR depth / item count | ≤ 16 / ≤ 1024 |
@@ -1393,19 +1495,28 @@ All valid bits: `0x1F23` (8 capabilities); message role bits: `0x1820`. Any othe
 
 ## Appendix C References
 
-- FIDO Alliance, [Client to Authenticator Protocol (CTAP) 2.3][ctap]: command codes, authenticatorGetInfo, authenticatorClientPIN, PIN/UV Auth Protocol Two, authenticatorReset, status codes, CTAPHID and NFC bindings
-- W3C Web Authentication Level 3
-- RFC 2119: Key words for use in RFCs to Indicate Requirement Levels
-- RFC 8949: Concise Binary Object Representation (CBOR), §4.2 Deterministically Encoded CBOR
-- RFC 8152 / RFC 9052: CBOR Object Signing and Encryption (COSE) Key
-- RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA)
-- RFC 5869: HMAC-based Extract-and-Expand Key Derivation Function (HKDF)
-- FIPS 180-4 (SHA-256 / SHA-512), FIPS 197 (AES), SP 800-38A (CBC)
-- SEC 1 / FIPS 186-5: P-256 elliptic curve
-- RFC 9053: COSE Initial Algorithms (EC2 key type and P-256 curve identifier)
-- ISO/IEC 7816-4: command chaining, GET RESPONSE and status words
-- KERI (Key Event Receipt Infrastructure) specification: event format, SAID, pre-rotation commitment
-- BLAKE3 specification
+### C.1 Normative References
+
+- [BCP14] RFC 2119 and RFC 8174, Key words for use in RFCs to Indicate Requirement Levels — <https://www.rfc-editor.org/info/bcp14>
+- [CTAP] FIDO Alliance, [Client to Authenticator Protocol (CTAP) 2.3][ctap]: command codes, authenticatorGetInfo, authenticatorClientPIN, PIN/UV Auth Protocol Two, authenticatorReset, status codes, CTAPHID and NFC bindings
+- [RFC8949] Concise Binary Object Representation (CBOR), §4.2 Deterministically Encoded CBOR — <https://www.rfc-editor.org/rfc/rfc8949>
+- [RFC9052] CBOR Object Signing and Encryption (COSE): Structures and Process — <https://www.rfc-editor.org/rfc/rfc9052>
+- [RFC9053] COSE Initial Algorithms — <https://www.rfc-editor.org/rfc/rfc9053>
+- [RFC8032] Edwards-Curve Digital Signature Algorithm (EdDSA) — <https://www.rfc-editor.org/rfc/rfc8032>
+- [RFC8259] The JavaScript Object Notation (JSON) Data Interchange Format — <https://www.rfc-editor.org/rfc/rfc8259>
+- [RFC5869] HMAC-based Extract-and-Expand Key Derivation Function (HKDF) — <https://www.rfc-editor.org/rfc/rfc5869>
+- [FIPS180-4] Secure Hash Standard (SHA-256); [FIPS197] AES; [SP800-38A] CBC mode; [FIPS186-5] / [SEC1] P-256
+- [ISO7816-4] ISO/IEC 7816-4: APDU structure, command chaining, GET RESPONSE and status words
+- [CCID] USB Implementers Forum, *Device Class Specification for USB Chip/Smart Card Interface Devices*, Revision 1.1
+- [KERI] Trust over IP, KERI specification, event format of KERI 1.0 (version string `KERI10`) — <https://github.com/trustoverip/kswg-keri-specification>
+- [CESR] Trust over IP, CESR specification: qb64 codes `D` and `E` — <https://github.com/trustoverip/kswg-cesr-specification>
+- [BLAKE3] The BLAKE3 cryptographic hash function — <https://github.com/BLAKE3-team/BLAKE3-specs>
+- [VCAP-EI] VCAP Enterprise Interface 1.0 — <https://vlei-auth.github.io/vcap-ei/>
+
+### C.2 Informative References
+
+- [WEBAUTHN] W3C, Web Authentication Level 3 — <https://www.w3.org/TR/webauthn-3/>
+- [VAF] vLEI Authenticator Framework 1.0 — <https://vlei-auth.github.io/vaf/>
 
 [ctap]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html
 [ctap-commands]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html
@@ -1421,3 +1532,292 @@ All valid bits: `0x1F23` (8 capabilities); message role bits: `0x1820`. Any othe
 [ctap-usb]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#usb
 [ctap-nfc]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#nfc
 [ctap-nfc-getresponse]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#nfc-ctap-response
+
+## Appendix D Attestation Certificate Chain and Enrollment Records
+
+The attestation identity (§3.1) is an Ed25519 key pair generated at manufacturing together with a certificate chain issued by the manufacturer. The chain is stored in the authenticator but no VCAP command returns it; the manufacturer delivers it to the enterprise for enrollment (VAF §3.1, §9.5).
+
+### D.1 Certificate Chain
+
+```
+attestationChain = [+ certificate_bstr]      ; 1..4 entries, leaf first, root last
+certificate      = X.509 v3 certificate, DER  ; each ≤ 2048 bytes
+```
+
+The deterministic CBOR encoding of `attestationChain` MUST NOT exceed 1400 bytes.
+
+Each certificate MUST satisfy:
+
+| Item | Requirement |
+|---|---|
+| Encoding | DER; re-encoding the parsed certificate yields the same bytes |
+| Subject public key | Ed25519, and a safe public key (§9.1 role.public constraints) |
+| Signature algorithm | Ed25519 (OID 1.3.101.112), no parameters, 64-byte signature |
+| Issuer | Equals the subject of the next certificate; the last certificate is self-issued |
+| Signature | Verifies under the next certificate's public key (the last under its own) |
+| Validity | The verification time lies within notBefore..notAfter |
+| BasicConstraints | Present. `cA` is FALSE for the leaf and TRUE for every other certificate; if `pathLenConstraint` is present it is not exceeded |
+| KeyUsage | If present: `digitalSignature` for the leaf, `keyCertSign` for the others |
+| Critical extensions | Only BasicConstraints and KeyUsage may be critical |
+
+A chain of exactly one certificate is a self-issued certificate for the attestation key itself; it then has `cA` TRUE. It is intended for development devices only.
+
+The leaf's public key is `attestationPublic`, and the device identifier is `device = H("VCAP-DEVICE-ID\0" ‖ attestationPublic_raw32)` (§6.3).
+
+### D.2 Verifier Procedure
+
+An enterprise (or any verifier of StateProof) performs the following steps once, at enrollment:
+
+1. Obtain the manufacturer root certificate through a trusted channel independent of the device and of the platform. The root is the trust anchor; it MUST equal the last chain entry byte for byte.
+2. Verify the chain per D.1 at the current time.
+3. Take `attestationPublic` from the leaf and compute `device`.
+4. Bind (device, attestationPublic) to the enrollment record (D.4). Thereafter verify every StateProof and WebAuthn `deviceSig` with that enrolled key (§9.3, §7.14.5).
+
+A verifier MAY also re-verify the chain each time it uses a StateProof. A chain certificate that expires then makes the device unusable for that verifier, so manufacturers SHOULD issue certificates valid for the device's whole service life.
+
+### D.3 Manufacturer Enrollment Package
+
+The manufacturer delivers, for each device:
+
+```
+EnrollmentPackage = [1, device_b32, attestationPublic_b32, attestationChain]
+```
+
+A manufacturer MUST deliver the enrollment package in this form. The enterprise MUST recompute `device` and `attestationPublic` from the chain (D.2) and reject a package whose fields disagree. The package carries no secret.
+
+### D.4 Enterprise Asset Record (informative)
+
+An enterprise service keeps, after BindEnterprise and Personalize, one public record per device and reset epoch. The following layout is an example:
+
+```
+AssetRecord = [1, device_b32, tenant_tstr, resetEpoch, enterpriseRoot_b32,
+               attestationPublic_b32, trustConfig_bstr, manufacturerRoot_bstr,
+               clientWitnesses[* aid_t44], clientToad]
+```
+
+`tenant_tstr` is the enterprise identifier in clear; the device stores only its digest (§6.3). `clientWitnesses` and `clientToad` are the enterprise's witness policy for CLIENT inception. The record is enterprise-internal; the VCAP-EI `registration` operation returns its public subset.
+
+### D.5 Attestation Identity in the Authenticator
+
+The authenticator stores the attestation private key and `attestationChain` in a read-only record written at manufacturing, protected by an integrity check. A record that fails its integrity check puts the authenticator into `RECOVERY_REQUIRED` (§5.1).
+
+## Appendix E Test Vectors
+
+The vectors below are byte-exact values for the derivations and structures of Sections 6, 8 and 9 and for the event syntax of §8.4.3. They are also published as `test-vectors/vcap-1.0-vectors.json`, together with `test-vectors/generate.py`, which reproduces them from the fixed inputs of E.0. All byte strings are lowercase hex.
+
+Signatures are computed with RFC 8032 deterministic Ed25519. VCAP leaves the signing method to the implementation (§8.6), so an authenticator's own signatures over the same input may differ; implementations check them by verification. TrustConfig and Ticket signatures, which the authenticator verifies, are fixed inputs.
+
+### E.0 Inputs
+
+Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the labels attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, agent-nonce, key-agreement (P-256 scalar = seed mod (n - 1) + 1). The slots are slot 0 (WORK) and slot 1 (CLIENT) of reset epoch 0.
+
+| Input | Value |
+|---|---|
+| attestationSeed | `d77de77cbf8685c43cbf6063cebe21cbc2d8a3b88018fda727a00c467aeb7dbd` |
+| attestationPublic | `39f3eed37dbc97a952cee6c26855e2efb610d7f9c58bc5ae68a14213eba17e61` |
+| enterpriseRootSeed | `63c3623cbf9c0b962fe6d222d27b892d97c58da34801c735e5a64f2e7612621b` |
+| enterpriseRoot | `637da14a2d51b71f9f014e4b6baa897e1c2930ff142024c8fce252a54fb63b8d` |
+| roleSeed(ops) | `4f4248c0dbac867c124636c4446ba72854ae0c04bacd33099df948cfc21639d8` |
+| rolePublic(ops) | `9f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca` |
+| slot0 (WORK) currentSeed | `733dc232c31a44b4743b2aec578b38fc8c9aa3a65203c15fda5881da1424fb5f` |
+| slot0 currentPublic | `6a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b8915` |
+| slot0 (WORK) nextSeed | `8e8648b7bc38264f49d50e962e19180f6e71748b04e436ca62c279710cf44644` |
+| slot0 nextPublic | `228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3d` |
+| slot1 (CLIENT) currentPublic | `7ca14221c7a974006861637fda5cb3062b5adfee4feb58e43887313771cf0692` |
+| slot1 nextPublic | `576f07a58f3368a19da7a5a9153ffe9f64cb1bf613f560b8a7fc8169ea67c574` |
+| handleKey | `0d041887d7cf7864d6d577a5b534807ad29f13175de2e28bb08b118276857d2b` |
+| pinUvAuthToken | `83eaddd0d8b0571de37099f0b36fa87fcd6a74eb898d4f2e1edde10d1b0baa4c` |
+| challenge | `5a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` |
+| agentNonce | `ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a` |
+| keyAgreementPrivateScalar | `521f6cb05ab172aca6ad5d25801ab97f98aca8396212d74031ba5c25240fb579` |
+| enterpriseIdentifier | `VLEIAUTHEXAMPLE00001` |
+| rpId | `vlei.example.com` |
+| resetEpoch | `0` |
+
+### E.1 Identifiers
+
+- **device:** `778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7`
+- **tenant:** `2f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705`
+- **keyAgreement.x:** `4bded8fe009c05552185af797aa1687ddc585de9d6c99e8123dfcf57b839378b`
+- **contextId:** `76495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee`
+
+### E.2 KERI encodings
+
+- **qb64(D, slot0 current):** `DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV`
+- **commit(slot0 next):** `ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M`
+- **qb64(D, slot0 next) (commit input, ASCII):** `DCKOw_qVulTD7Fu6PSfCNcckXw3cPE__XFdR2sSuCG09`
+
+### E.3 TrustConfig
+
+body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F23, rolePublic]], [SHA-256(rpId)]]
+
+- **body:**
+
+  ```
+  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f2358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a
+  ```
+- **rootSignature:**
+
+  ```
+  bcded429480c7803ae3ddf1388ff210931887ab191fe3756d365a90cc881eb411c2e0a3f804db83f4d963013f2736375cf47b5432e3c51ea3bdeee83b22d850f
+  ```
+- **envelope:**
+
+  ```
+  82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f2358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a5840bcded429480c7803ae3ddf1388ff210931887ab191fe3756d365a90cc881eb411c2e0a3f804db83f4d963013f2736375cf47b5432e3c51ea3bdeee83b22d850f
+  ```
+- **configurationDigest:** `5f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f`
+
+### E.4 KERI events
+
+- **slot0 icp (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON00012b_","t":"icp","d":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","s":"0","kt":"1","k":["DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV"],"nt":"1","n":["ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M"],"bt":"0","b":[],"c":[],"a":[]}
+  ```
+- **slot0 icp length:** `299`
+- **slot0 icp originalDigest:** `0de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a415`
+- **slot0 AID (= d = i):** `EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2`
+- **slot0 ixn s=1 (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON0000cb_","t":"ixn","d":"EIG_otvN28LG8_WTikcc-pND9e1kW8_TWka4cF9V4q0k","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","s":"1","p":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","a":[]}
+  ```
+- **slot0 ixn length:** `203`
+- **slot0 ixn originalDigest:** `a84fb3d3a24cfab8f5e9c833ef00823b4887a2cdbaf2a21ff0098787c6fc73ab`
+- **slot0 ixn SAID:** `EIG_otvN28LG8_WTikcc-pND9e1kW8_TWka4cF9V4q0k`
+- **slot1 CLIENT AID:** `EKYc31TwM0SQxtZa6a5rPIdnOdfHhB3ueiebE8haHBa4`
+
+### E.5 KeyRef and Tickets
+
+- **KeyRef(slot 0, WORK, current):** `7ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4`
+- **ICP Ticket body:**
+
+  ```
+  86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b
+  ```
+- **ICP Ticket signature:**
+
+  ```
+  24522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de5704
+  ```
+- **ICP Ticket envelope:**
+
+  ```
+  83584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de5704
+  ```
+- **ICP ticketId (VCAP-EI):** `27bf2fb71f91ae4a5420cfadd0963700`
+- **IXN Ticket envelope (signCounter 2):**
+
+  ```
+  83584a86020258207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4025820a84fb3d3a24cfab8f5e9c833ef00823b4887a2cdbaf2a21ff0098787c6fc73ab18cb636f707358400409c70e3bc3e1a977c8a18194426d55d068f3b00f608cde1bbb616cce51eccc82b01e3e0e4706a764443ce2158f73eb347066dcc575cc6bbdd0b44e5d9c2007
+  ```
+
+### E.6 Sign request (ICP, inline)
+
+- **H(CBOR(P)):** `87e852948abb059d3ec4a62f349918f226ac3a240550ceb5d23c7e5026eca50e`
+- **auth message:**
+
+  ```
+  564341502d434d440076495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee5387e852948abb059d3ec4a62f349918f226ac3a240550ceb5d23c7e5026eca50e
+  ```
+- **pinUvAuthParam:** `4a45bf36c1082563634455a4a762abbe3346b259a66461097301e147ceefb67f`
+- **request (command byte + CBOR):**
+
+  ```
+  53a60100020103589483584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de57040459012b7b2276223a224b45524931304a534f4e3030303132625f222c2274223a22696370222c2264223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2269223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2273223a2230222c226b74223a2231222c226b223a5b22444770686e316f42324731576d354e6f45507855646c4f4c565164745f4f5f36426d7367633569306d346b56225d2c226e74223a2231222c226e223a5b224543653377517a3855544f46716136644e6e776263396d5164496d75644b78685f5a41396d61595f7057304d225d2c226274223a2230222c2262223a5b5d2c2263223a5b5d2c2261223a5b5d7d18fe0218ff58204a45bf36c1082563634455a4a762abbe3346b259a66461097301e147ceefb67f
+  ```
+- **request length:** `499`
+
+### E.7 Signed (ICP)
+
+Signature by RFC 8032 deterministic Ed25519; an authenticator's signature may differ and is checked by verification.
+
+- **signature:**
+
+  ```
+  1f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f696745601
+  ```
+- **Signed:**
+
+  ```
+  a50158401f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f6967456010258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89150358200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150419012b0501
+  ```
+- **response:**
+
+  ```
+  00a50158401f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f6967456010258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89150358200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150419012b0501
+  ```
+
+### E.8 StateProof (after ICP)
+
+slot 0 ACTIVE WORK after the ICP; authState [8, 0, READ|SIGN, 0, 590000]
+
+- **stateBody:**
+
+  ```
+  87025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600
+  ```
+- **signature:**
+
+  ```
+  980b4ad528b94d6d42207597b6c2010628f4498dbbd33a4880e5ccb473d77d84fcc9e15e6a07e6c12d3e4d09f5e9d1d659e1dd46c75d555a518dbf3b33eff70c
+  ```
+- **StateProof:**
+
+  ```
+  a20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840980b4ad528b94d6d42207597b6c2010628f4498dbbd33a4880e5ccb473d77d84fcc9e15e6a07e6c12d3e4d09f5e9d1d659e1dd46c75d555a518dbf3b33eff70c
+  ```
+
+### E.9 WebAuthn route
+
+- **slotHandle (slot 0, WORK):** `5648318300000286867ec34f2153cf3f8421604168f7a0`
+- **VCAPREQ GetState (op 2):** `565131a2010202575648318300000286867ec34f2153cf3f8421604168f7a0`
+- **rpIdHash:** `02e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a`
+
+### E.10 AGENT original (slot 1, CLIENT)
+
+receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'veridian'
+
+- **original:**
+
+  ```
+  564341502d4147454e542d53455353494f4e0006454b5963333154774d30535178745a61366135725049646e4f64664868423375656965624538686148426134860178196167656e742d676174657761792e6578616d706c652e636f6d5820ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a1a6ae80ac01a6ae80bec4ba10168766572696469616e
+  ```
+- **length:** `149`
+- **originalDigest:** `8c7299b02d28d87656f065fbe0160633c55cba81782f073d5f197b1dfb03a674`
+
+### E.11 Negative Cases
+
+An authenticator rejects each of the following. The Ticket uses the body of E.5; each KERI case keeps the `v` size equal to the message length and violates only the rule named.
+
+- **Ticket signature with S + L (§6.4 rule 1: reject):**
+
+  ```
+  83584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc01382546063a9a8cd4ede6eb0a9baa681418b2d4063a543a68082361a73ff7de5714
+  ```
+- **icp with a space after ':' (§8.4.3 item 1):**
+
+  ```
+  {"v":"KERI10JSON00012c_","t": "icp","d":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","s":"0","kt":"1","k":["DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV"],"nt":"1","n":["ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M"],"bt":"0","b":[],"c":[],"a":[]}
+  ```
+- **icp with kt before s (§8.4.3 item 2):**
+
+  ```
+  {"v":"KERI10JSON00012b_","t":"icp","d":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","kt":"1","s":"0","k":["DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV"],"nt":"1","n":["ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M"],"bt":"0","b":[],"c":[],"a":[]}
+  ```
+- **icp with uppercase version hex (§8.4.3 item 3):**
+
+  ```
+  {"v":"KERI10JSON00012B_","t":"icp","d":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","s":"0","kt":"1","k":["DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV"],"nt":"1","n":["ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M"],"bt":"0","b":[],"c":[],"a":[]}
+  ```
+- **ixn with s='01' (§8.4.3 item 4):**
+
+  ```
+  {"v":"KERI10JSON0000cc_","t":"ixn","d":"EIG_otvN28LG8_WTikcc-pND9e1kW8_TWka4cF9V4q0k","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","s":"01","p":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","a":[]}
+  ```
+- **icp with escaped t value (§8.4.3 item 5):**
+
+  ```
+  {"v":"KERI10JSON000130_","t":"\u0069cp","d":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","s":"0","kt":"1","k":["DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV"],"nt":"1","n":["ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M"],"bt":"0","b":[],"c":[],"a":[]}
+  ```
