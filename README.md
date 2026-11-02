@@ -1,4 +1,4 @@
-# vLEI Key Authenticator Protocol (VCAP)
+# vLEI Client to Authenticator Protocol (VCAP)
 
 Read the [VCAP 1.0 Review Draft](https://vlei-auth.github.io/vcap/).
 
