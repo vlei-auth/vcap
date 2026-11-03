@@ -334,6 +334,31 @@ N["ixn with s='01' (§8.4.3 item 4)"] = resize(ixn.decode().replace('"s":"1"', '
 N["icp with escaped t value (§8.4.3 item 5)"] = resize(icp_text.replace('"t":"icp"', '"t":"\\u0069cp"', 1))
 N["note"] = "Each negative KERI case keeps the v size equal to the message length, so the named rule is the only violation."
 
+# ------------------------------------------------------------- Binding (§9.5)
+
+binding_vectors = {}
+for name, lifecycle, epoch, digest in (
+        ("STOCK_UNBOUND", 0, reset_epoch, NULL),
+        ("ENTERPRISE_BOUND", 1, reset_epoch + 1, NULL),
+        ("PERSONALIZED_NO_PIN", 2, reset_epoch, config_digest)):
+    binding = NULL if lifecycle == 0 else [tenant, H(root_pub), epoch, digest]
+    binding_body = cbor([2, device, lifecycle, challenge, binding])
+    binding_sig = ed_sign(att_sk, b"VCAP-BINDING\0" + binding_body)
+    binding_result = cbor({1: binding_body, 2: binding_sig})
+    ed_verify(att_pub, binding_sig, b"VCAP-BINDING\0" + binding_body)
+    assert len(binding_body) <= 256
+    binding_vectors[name] = {
+        "request": hx(bytes([0x50]) + cbor({2: challenge})),
+        "bindingBody": hx(binding_body), "signature": hx(binding_sig),
+        "BindingProof": hx(binding_result), "response": "00" + hx(binding_result),
+    }
+V["E.12 Binding mode"] = binding_vectors
+N["GetState keys 1 and 2"] = {"request": hx(bytes([0x50]) + cbor({1: challenge, 2: challenge})), "status": "02"}
+N["Binding mode PIN_READY"] = {"request": hx(bytes([0x50]) + cbor({2: challenge})), "status": "f0"}
+mismatch_body = cbor([2, device, tenant, reset_epoch + 1, 0x03, 6, roles, rp_ids])
+mismatch_env = cbor([mismatch_body, ed_sign(root_sk, b"VCAP-TRUST\0" + mismatch_body)])
+N["Personalize epoch mismatch"] = {"configuration": hx(mismatch_env), "status": "f8"}
+
 # --------------------------------------------------------------- self-check
 
 ed_verify(root_pub, tc_sig, b"VCAP-TRUST\0" + tc_body)
