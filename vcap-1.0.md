@@ -192,7 +192,7 @@ ENTERPRISE_BOUND
 PERSONALIZED_NO_PIN
    │ ClientPIN setPIN (by the employee)
    ▼
-PIN_READY ── CreateIdentity / Sign(icp,ixn,rot,exn,rpy,agent) / PrepareRotation / Recover / GetState …
+PIN_READY ── CreateIdentity / Sign(icp,ixn,rot,exn,rpy) / PrepareRotation / Recover / GetState …
    │ Reset (within 10 s of power-up + 5 s hold)
    ▼
 ENTERPRISE_BOUND (binding unchanged, resetEpoch+1, not personalized) ──> Personalize again
@@ -278,7 +278,7 @@ UNUSED ────────────────▶ CREATED ────�
 | ACTIVE | 1 or 2 | present | WORK only, optional | present | ≥ 1 | present |
 
 - Any mix of owners is permitted, including four WORK slots. Slots are independent of one another and hold no receipts or pending events. A slot keeps its identity until Reset, which returns all slots to UNUSED together.
-- A CLIENT slot permits ICP / IXN / AGENT; a WORK slot permits ICP / IXN / ROT / EXN / RPY.
+- A CLIENT slot permits ICP / IXN; a WORK slot permits ICP / IXN / ROT / EXN / RPY.
 - When `prepared` exists, a further PrepareRotation returns the existing preparation unchanged.
 - `signCounter` is a persistent per-slot signature counter. It starts at 0 and is incremented by one in the atomic commit of every signature of any kind (§8.7); it never decreases within a reset epoch. Each Ticket names the counter value its signature will receive (§9.2), so each Ticket is usable once.
 
@@ -364,7 +364,7 @@ contextId  = H("VCAP-CONTEXT\0" ‖ keyAgreement.x)   ; the authenticator's keyA
 
 The enterprise identifier is a string chosen by the enterprise: 1..128 bytes of UTF-8 in Unicode Normalization Form C. An enterprise that has an LEI SHOULD use its LEI (ISO 17442: 20 uppercase alphanumeric characters).
 
-`actualPublic` is **the public key actually used for this signature**: current for ICP / IXN / EXN / RPY / AGENT, and old.next for ROT. The authenticator computes KeyRef from its own verified slot state and MUST NOT use a KeyRef or digest supplied by the platform.
+`actualPublic` is **the public key actually used for this signature**: current for ICP / IXN / EXN / RPY, and old.next for ROT. The authenticator computes KeyRef from its own verified slot state and MUST NOT use a KeyRef or digest supplied by the platform.
 
 ### 6.4 Cryptographic Primitives
 
@@ -396,7 +396,6 @@ Each signed object uses a unique domain separation tag. Verifiers MUST use the p
 | `"VCAP-TRUST\0"` | Enterprise root key | TrustConfig `body` bytes | §9.1 |
 | `"VCAP-SIGN\0"` | TrustConfig role key | Ticket `body` bytes | §9.2 |
 | `"VCAP-CMD\0"` | HMAC(token) | Command authentication message | §8.1 |
-| `"VCAP-AGENT-SESSION\0"` | Slot current key (kind 6) | AGENT message prefix | §8.5.3 |
 | `"VCAP-WEBAUTHN\0"` | Attestation key | WebAuthn-wrapped result | §7.14.5 |
 | `"VCAP-HANDLE\0"` | HMAC(handleKey) | Slot handle | §7.14.3 |
 | (no prefix) | Slot key | KERI message | §8.4, §8.5 |
@@ -600,7 +599,7 @@ Generates a new signature over a message with a slot key. Larger messages use th
 | Key | Name | Type | Description |
 |---:|---|---|---|
 | 1 | slot | uint | 0..3 |
-| 2 | kind | uint | 1..6, see below |
+| 2 | kind | uint | 1..5, see below |
 | 3 | ticket | bstr | Ticket envelope, ≤ 512 bytes (§9.2) |
 | 4 | original | bstr | Message; complete request ≤ 2048 bytes |
 | 254 | pinUvAuthProtocol | uint | 2 |
@@ -615,14 +614,13 @@ Generates a new signature over a message with a slot key. Larger messages use th
 | 3 | ROT | KERI `rot` | WORK | 16384 | Yes | Slot keys, latest, signature counter, lastSigned; prepared deleted |
 | 4 | EXN | KERI `exn` | WORK | 16384 | No | Signature counter, lastSigned |
 | 5 | RPY | KERI `rpy` | WORK | 16384 | No | Signature counter, lastSigned |
-| 6 | AGENT | Agent session claims | CLIENT | 512 | No | Signature counter, lastSigned |
 
 **Required permission:** SIGN. **UP:** yes, one new user action each time (sensor press, or NFC tap per §8.2). **Result:** Signed (§9.4).
 
 The authenticator performs the following steps (**BEGIN phase**):
 
 1. Authenticate per §8.1 (SIGN).
-2. If `slot ∉ 0..3` or `kind ∉ 1..6`, return `INVALID_PARAMETER`.
+2. If `slot ∉ 0..3` or `kind ∉ 1..5`, return `INVALID_PARAMETER`.
 3. If not personalized, return `INVALID_STATE`.
 4. Read the slot's persistent state and verify its integrity (including keys and, where needed, prepared); on failure return `RECOVERY_REQUIRED`.
 5. Verify the Ticket per §8.3, obtaining `originalLength`, `originalDigest` and `signCounter`.
@@ -798,7 +796,7 @@ The authenticator is also a FIDO2 authenticator. It implements [authenticatorMak
 
 These operations follow CTAP, with the following VCAP rules:
 
-1. **Separate key material.** FIDO credentials are generated and stored separately from the four KERI slots. A FIDO credential key MUST NOT sign through a VCAP operation. A slot key MUST sign only KERI messages and agent claims through the VCAP operations (§7.7, §7.14), and MUST NOT sign authenticator data or client data.
+1. **Separate key material.** FIDO credentials are generated and stored separately from the four KERI slots. A FIDO credential key MUST NOT sign through a VCAP operation. A slot key MUST sign only KERI messages through the VCAP operations (§7.7, §7.14), and MUST NOT sign authenticator data or client data.
 2. **Lifecycle.** Standard operations are available in every lifecycle state, independent of enterprise binding and personalization. In RECOVERY_REQUIRED they return `RECOVERY_REQUIRED` (§5.1).
 3. **PIN and tokens.** The employee's single PIN serves both. A token obtained for CTAP permissions (`mc`, `ga`, …) authenticates CTAP operations as CTAP defines; a context whose token carries only CTAP permissions is never held (§5.3).
 4. **User presence.** UP is collected per §8.2, so an NFC tap counts as one UP and a sensor press is required otherwise.
@@ -1051,26 +1049,9 @@ Complete JSON; total length matches `v`; `t="exn"`; `i` equals this slot's AID. 
 
 Complete JSON; total length matches `v`; `t="rpy"`. Route, identity and business meaning are verified by the enterprise.
 
-#### 8.5.3 AGENT (kind 6, CLIENT)
+#### 8.5.3 Kind 6 (Reserved)
 
-```
-original = "VCAP-AGENT-SESSION\0" ‖ 0x06 ‖ aid_t44 ‖ body
-body     = CBOR([1, receiver_tstr, nonce_b32, issued, expires, claims_bstr])
-claims   = CBOR({1:walletProfile_tstr})
-```
-
-| Field | Content |
-|---|---|
-| `0x06` | The AGENT kind value |
-| `aid_t44` | The slot's AID as 44 bytes of qb64 text |
-| `receiver` | The receiver identifier the enterprise assigned for the AGENT purpose (VCAP-EI §7.5) |
-| `nonce` | 32 random bytes generated by the platform |
-| `issued`, `expires` | uint, seconds since 1970-01-01T00:00:00Z |
-| `walletProfile` | The name of a wallet operation profile (VCAP-EI Appendix C) |
-
-The authenticator checks: the domain separation tag, the kind byte, that `aid_t44` equals this slot's AID, that the total length is ≤ 512 and equals the Ticket's originalLength, and the Ticket digest. The body is opaque to the authenticator; the enterprise verifies claims, receiver, nonce and `0 < expires − issued ≤ 300`.
-
-The Agent requests a session permits are exactly those of the wallet operation profile named in `claims`. An enterprise service MUST NOT accept an AGENT session for KEL events, RPY or EXN, for Agent creation, or for administration.
+Kind 6 and capability bit 5 are reserved and MUST NOT be assigned. Earlier drafts used them for an AGENT session message signed by a CLIENT slot; reading from the Agent now relies on the enterprise bearer token alone (VCAP-EI §7.11). An authenticator returns `INVALID_PARAMETER` for kind 6 (§7.7 step 2), and a TrustConfig containing bit 5 fails Personalize (Appendix B).
 
 ### 8.6 Signature Computation
 
@@ -1090,7 +1071,7 @@ The signature is a 64-byte Ed25519 signature over the message, verifiable under 
 | PrepareRotation | The slot's prepared entry (latest unchanged) |
 | Sign ICP / IXN | The slot's latest (= this event, including the original signature), signature counter and lastSigned |
 | Sign ROT | The slot's keys (current←old.next, next←newNext), latest, signature counter and lastSigned; prepared deleted |
-| Sign EXN / RPY / AGENT | The slot's signature counter and lastSigned |
+| Sign EXN / RPY | The slot's signature counter and lastSigned |
 | Reset | Reset intent record → secret destruction → new reset epoch → reset intent record cleared (§7.12) |
 | GetState, Recover | No business write |
 
@@ -1151,7 +1132,7 @@ body   = [2, kind, signerKeyRef_b32, signCounter,
 
 | Field | Description |
 |---|---|
-| kind | 1..6 |
+| kind | 1..5 |
 | signerKeyRef | §6.3, computed over the actual signing public key |
 | signCounter | The slot's signature counter value after this signature, i.e. the current value + 1 |
 | originalDigest | H(message) |
@@ -1358,7 +1339,7 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 
 **CreateIdentity / PrepareRotation:** check the slot's phase and current / next / prepared keys with GetState; the authenticator generates each key set only once.
 
-**Non-KEL (EXN / RPY / AGENT):** GetState shows whether the counter reached the Ticket's `signCounter`. If it did and no later signature has occurred, Recover with `originalDigest` returns the signature from `lastSigned`. If a later signature has already replaced `lastSigned`, the signature can only come from the enterprise archive or the recipient; a lost response that was never archived cannot be recovered. If the counter did not advance, nothing was signed.
+**Non-KEL (EXN / RPY):** GetState shows whether the counter reached the Ticket's `signCounter`. If it did and no later signature has occurred, Recover with `originalDigest` returns the signature from `lastSigned`. If a later signature has already replaced `lastSigned`, the signature can only come from the enterprise archive or the recipient; a lost response that was never archived cannot be recovered. If the counter did not advance, nothing was signed.
 
 **PIN operations:** query getPinRetries; the user then repeats the operation.
 
@@ -1383,9 +1364,9 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 | 9 | Employee | CreateIdentity(WORK) → Sign(ICP, WORK) | 1 |
 | 10 | Employee | Sign(RPY, WORK): Agent end-role | 1 |
 
-On the native route, steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature. The AGENT session (Sign(AGENT, CLIENT), §8.5.3) is not part of onboarding: its claims expire within 300 s, so the platform signs one when it first needs the Agent. On the WebAuthn route (§12.9) each of steps 5, 6, 8, 9 and 10 is one browser call, the two parts of step 9 being separate calls, with one PIN entry and one UP each.
+On the native route, steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature. On the WebAuthn route (§12.9) each of steps 5, 6, 8, 9 and 10 is one browser call, the two parts of step 9 being separate calls, with one PIN entry and one UP each.
 
-The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before calling KERIA to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
+The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys, and SHOULD NOT set the PIN: the device is handed to the employee in PERSONALIZED_NO_PIN, and step 4 takes place on the employee's platform. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before calling KERIA to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
 
 ### 12.6 Rotation (WORK)
 
@@ -1471,7 +1452,7 @@ A user who dismisses the browser dialog causes `CTAPHID_CANCEL`, handled per §1
 ### 13.2 Remaining Risks
 
 1. **Induced signing:** UP confirms presence only, so the authenticator cannot tell whether the user was induced to sign a well-formed but malicious message. Independent enterprise approval of the message, recipients, attachments, route, receiving domain and deadline is required.
-2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY (`dt`) and AGENT (`expires`) carry their own validity that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, or Resets the authenticator.
+2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY carry their own validity (`dt`) that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, or Resets the authenticator.
 3. **NFC tap as UP:** over NFC the tap satisfies UP for one request per field session. A compromised platform that holds a valid PIN token and Ticket can use the user's next tap for its own request, just as it can use a sensor press; a tap also happens when the authenticator is left on a reader. Enterprise approval of the message content remains the control.
 4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.13), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
 5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform, or any page served from an RP ID listed in `webauthnRpIds`, can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8). The enterprise lists only RP IDs whose pages it controls. Pages on other RP IDs cannot detect the VCAP function: the authenticator answers them as a security key without it (§7.14.1).
@@ -1500,7 +1481,6 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | KERI serialization | KERI 1.0 JSON (`KERI10JSON`) |
 | Complete request / response limit | 2048 bytes |
 | KERI message limit (kind 1..5) | 16 384 bytes |
-| AGENT message limit (kind 6) | 512 bytes |
 | Ticket | ≤ 512 bytes |
 | TrustConfig envelope | ≤ 1536 bytes |
 | stateBody | ≤ 1536 bytes |
@@ -1532,14 +1512,13 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 |---|---|---:|---|---|
 | CLIENT | ICP | 0 | `0x0001` | KEL |
 | CLIENT | IXN | 1 | `0x0002` | KEL |
-| CLIENT | AGENT | 5 | `0x0020` | Message |
 | WORK | ICP | 8 | `0x0100` | KEL |
 | WORK | IXN | 9 | `0x0200` | KEL |
 | WORK | ROT | 10 | `0x0400` | KEL |
 | WORK | EXN | 11 | `0x0800` | Message |
 | WORK | RPY | 12 | `0x1000` | Message |
 
-All valid bits: `0x1F23` (8 capabilities); message role bits: `0x1820`. Any other bit (e.g. CLIENT ROT, WORK AGENT) is invalid; a capabilityMask containing an invalid bit, or equal to zero, causes Personalize to fail.
+All valid bits: `0x1F03` (7 capabilities); message role bits: `0x1800`. Any other bit (e.g. CLIENT ROT, or bit 5, formerly CLIENT AGENT and now reserved) is invalid; a capabilityMask containing an invalid bit, or equal to zero, causes Personalize to fail.
 
 ## Appendix C References
 
@@ -1657,7 +1636,7 @@ Signatures are computed with RFC 8032 deterministic Ed25519. VCAP leaves the sig
 
 ### E.0 Inputs
 
-Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the labels attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, agent-nonce, key-agreement (P-256 scalar = seed mod (n - 1) + 1). The slots are slot 0 (WORK) and slot 1 (CLIENT) of reset epoch 0.
+Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the labels attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, key-agreement (P-256 scalar = seed mod (n - 1) + 1). The slots are slot 0 (WORK) and slot 1 (CLIENT) of reset epoch 0.
 
 | Input | Value |
 |---|---|
@@ -1676,7 +1655,6 @@ Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the l
 | handleKey | `0d041887d7cf7864d6d577a5b534807ad29f13175de2e28bb08b118276857d2b` |
 | pinUvAuthToken | `83eaddd0d8b0571de37099f0b36fa87fcd6a74eb898d4f2e1edde10d1b0baa4c` |
 | challenge | `5a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` |
-| agentNonce | `ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a` |
 | keyAgreementPrivateScalar | `521f6cb05ab172aca6ad5d25801ab97f98aca8396212d74031ba5c25240fb579` |
 | enterpriseIdentifier | `VLEIAUTHEXAMPLE00001` |
 | rpId | `vlei.example.com` |
@@ -1697,24 +1675,24 @@ Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the l
 
 ### E.3 TrustConfig
 
-body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F23, rolePublic]], [SHA-256(rpId)]]
+body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], [SHA-256(rpId)]]
 
 - **body:**
 
   ```
-  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f2358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a
+  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a
   ```
 - **rootSignature:**
 
   ```
-  bcded429480c7803ae3ddf1388ff210931887ab191fe3756d365a90cc881eb411c2e0a3f804db83f4d963013f2736375cf47b5432e3c51ea3bdeee83b22d850f
+  7b960130c2482c0edcc52437ab8e787d1bafdcc2fcb3b32cd4bdae0cdfae0c9fc4405f61dd673a1ce546773bafbe19f55294e420e2974190d3a2d8eeade7fe0a
   ```
 - **envelope:**
 
   ```
-  82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f2358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a5840bcded429480c7803ae3ddf1388ff210931887ab191fe3756d365a90cc881eb411c2e0a3f804db83f4d963013f2736375cf47b5432e3c51ea3bdeee83b22d850f
+  82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a58407b960130c2482c0edcc52437ab8e787d1bafdcc2fcb3b32cd4bdae0cdfae0c9fc4405f61dd673a1ce546773bafbe19f55294e420e2974190d3a2d8eeade7fe0a
   ```
-- **configurationDigest:** `5f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f`
+- **configurationDigest:** `17057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd763`
 
 ### E.4 KERI events
 
@@ -1804,17 +1782,17 @@ slot 0 ACTIVE WORK after the ICP; authState [8, 0, READ|SIGN, 0, 590000]
 - **stateBody:**
 
   ```
-  87025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600
+  87025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600
   ```
 - **signature:**
 
   ```
-  980b4ad528b94d6d42207597b6c2010628f4498dbbd33a4880e5ccb473d77d84fcc9e15e6a07e6c12d3e4d09f5e9d1d659e1dd46c75d555a518dbf3b33eff70c
+  46c5e646e1cb8008fc7e88c482a4078d53625ecf1bc759b80a4b751a9e1b27c306a91395a1fd366e37cbe52ee064946653ffd672a0edf3e01cecaefd176e0109
   ```
 - **StateProof:**
 
   ```
-  a20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840980b4ad528b94d6d42207597b6c2010628f4498dbbd33a4880e5ccb473d77d84fcc9e15e6a07e6c12d3e4d09f5e9d1d659e1dd46c75d555a518dbf3b33eff70c
+  a20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f60002584046c5e646e1cb8008fc7e88c482a4078d53625ecf1bc759b80a4b751a9e1b27c306a91395a1fd366e37cbe52ee064946653ffd672a0edf3e01cecaefd176e0109
   ```
 
 ### E.9 WebAuthn route
@@ -1832,26 +1810,18 @@ The two results below carry a StateProof over the state of E.8 with authState `[
 - **result_bstr GetState with originalDigest, matching** (`[StateProof, Signed of E.7]`):
 
   ```
-  825901aaa20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190100001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840bdfda31954a65d4d53377111bdac69db772ce3593f0325da799275af9f3a12a8eb022b6247072daedb07225c960d05069a0e17c3528f42bcdf04b7461d00ff01a50158401f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f6967456010258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89150358200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150419012b0501
+  825901aaa20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190100001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840a7e05ed6a7728b429bf67d4aeac46b0ab3b33f4b8e2ea729b3147e69b68a78a4773c44e42d92158307a5f412b43e7129548beabe5a0ca4077545ba892aa1de0fa50158401f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f6967456010258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89150358200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150419012b0501
   ```
 - **result_bstr GetState with originalDigest, null** (`[StateProof, null]`):
 
   ```
-  825901aaa20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190100001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840bdfda31954a65d4d53377111bdac69db772ce3593f0325da799275af9f3a12a8eb022b6247072daedb07225c960d05069a0e17c3528f42bcdf04b7461d00ff01f6
+  825901aaa20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190100001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840a7e05ed6a7728b429bf67d4aeac46b0ab3b33f4b8e2ea729b3147e69b68a78a4773c44e42d92158307a5f412b43e7129548beabe5a0ca4077545ba892aa1de0ff6
   ```
 - **rpIdHash:** `02e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a`
 
-### E.10 AGENT original (slot 1, CLIENT)
+### E.10 (Unassigned)
 
-receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'vaf'
-
-- **original:**
-
-  ```
-  564341502d4147454e542d53455353494f4e0006454b5963333154774d30535178745a61366135725049646e4f64664868423375656965624538686148426134860178196167656e742d676174657761792e6578616d706c652e636f6d5820ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a1a6ae80ac01a6ae80bec46a10163766166
-  ```
-- **length:** `144`
-- **originalDigest:** `5ee683848f63a6d8c7a301419f52836477e9b206392714d68361ca1e05f24dcf`
+Formerly the AGENT original; kind 6 is reserved (§8.5.3).
 
 ### E.11 Negative Cases
 
@@ -1891,7 +1861,7 @@ An authenticator rejects each of the following. The Ticket uses the body of E.5;
 | Negative case | Input | Status |
 |---|---|---|
 | GetState keys 1 and 2 | `50a20158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c0258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` | `0x02` |
-| Personalize epoch mismatch | `82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050103068183636f7073191f2358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a58403197d9e99b62d6c5105618c9d46757445476f6a30c3dd490f0505343ac81f7b590381142ec728b248e55a10a5fc9038c8ff78c932517308bd67379223b83290f` | `0xf8` |
+| Personalize epoch mismatch | `82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050103068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a5840f61501b91bae6c2b6ccbc1b670b6d13d90f7f6ab4d049c3eaeb7a74819d82ceb02800db37628967365dfaba005a21719d38765b29b009b223a5e7e508135ff0c` | `0xf8` |
 
 ### E.12 Binding mode
 
@@ -1963,22 +1933,22 @@ Uses the existing E.0 inputs and challenge. ENTERPRISE_BOUND has resetEpoch E.0 
 - **bindingBody:**
 
   ```
-  85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a86970058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f
+  85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd763
   ```
 - **signature:**
 
   ```
-  22f58e2a3e0c519da9f958860290dce86855e7d8da7236ca6baf46065be191b5885fc92de3f161e4b245ce3633b075bf6cdcb91bd1b755e3515f189545f42306
+  72591861a94d8c8b28626a37b7dfdc5b4058b8792ea58a62596dc47fce5f38b4597b185c0f4b06b6a6e482d8ee765064716d20cbeac1d7ba795d1a236ceba80c
   ```
 - **BindingProof:**
 
   ```
-  a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a86970058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f02584022f58e2a3e0c519da9f958860290dce86855e7d8da7236ca6baf46065be191b5885fc92de3f161e4b245ce3633b075bf6cdcb91bd1b755e3515f189545f42306
+  a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76302584072591861a94d8c8b28626a37b7dfdc5b4058b8792ea58a62596dc47fce5f38b4597b185c0f4b06b6a6e482d8ee765064716d20cbeac1d7ba795d1a236ceba80c
   ```
 - **response:**
 
   ```
-  00a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a86970058205f87c9ae65d73bce772269f72cf79598911d187b7a090a79bebc661d18cf2b7f02584022f58e2a3e0c519da9f958860290dce86855e7d8da7236ca6baf46065be191b5885fc92de3f161e4b245ce3633b075bf6cdcb91bd1b755e3515f189545f42306
+  00a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76302584072591861a94d8c8b28626a37b7dfdc5b4058b8792ea58a62596dc47fce5f38b4597b185c0f4b06b6a6e482d8ee765064716d20cbeac1d7ba795d1a236ceba80c
   ```
 
 PIN_READY rejects request `50a10258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` with `0xf0`.

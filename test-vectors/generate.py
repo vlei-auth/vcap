@@ -131,7 +131,6 @@ s1_cur_seed, s1_next_seed = label_seed("slot1-current"), label_seed("slot1-next"
 handle_key = label_seed("handle-key")
 token = label_seed("pin-token")
 challenge = label_seed("challenge")
-nonce = label_seed("agent-nonce")
 ka_scalar = int.from_bytes(label_seed("key-agreement"), "big") % (
     0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551 - 1) + 1
 
@@ -150,7 +149,7 @@ WORK, CLIENT = 2, 1
 
 I.update({
     "seed derivation": "seed(label) = SHA-256('vcap-tv:' || label)",
-    "seed labels": "attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, agent-nonce, key-agreement (P-256 scalar = seed mod (n - 1) + 1)",
+    "seed labels": "attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, key-agreement (P-256 scalar = seed mod (n - 1) + 1)",
     "attestationSeed": hx(att_seed), "attestationPublic": hx(att_pub),
     "enterpriseRootSeed": hx(root_seed), "enterpriseRoot": hx(root_pub),
     "roleSeed(ops)": hx(role_seed), "rolePublic(ops)": hx(role_pub),
@@ -158,7 +157,7 @@ I.update({
     "slot0 (WORK) nextSeed": hx(s0_next_seed), "slot0 nextPublic": hx(s0n_pub),
     "slot1 (CLIENT) currentPublic": hx(s1c_pub), "slot1 nextPublic": hx(s1n_pub),
     "handleKey": hx(handle_key), "pinUvAuthToken": hx(token),
-    "challenge": hx(challenge), "agentNonce": hx(nonce),
+    "challenge": hx(challenge),
     "keyAgreementPrivateScalar": "%064x" % ka_scalar,
     "enterpriseIdentifier": enterprise_id, "rpId": rp_id, "resetEpoch": reset_epoch,
 })
@@ -185,14 +184,14 @@ V["E.2 KERI encodings"] = {
 
 # ---------------------------------------------------------- TrustConfig (§9.1)
 
-roles = [["ops", 0x1F23, role_pub]]
+roles = [["ops", 0x1F03, role_pub]]
 rp_ids = [H(rp_id.encode())]
 tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, roles, rp_ids])
 tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + tc_body)
 tc_env = cbor([tc_body, tc_sig])
 config_digest = H(tc_env)
 V["E.3 TrustConfig"] = {
-    "content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F23, rolePublic]], [SHA-256(rpId)]]",
+    "content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], [SHA-256(rpId)]]",
     "body": hx(tc_body), "rootSignature": hx(tc_sig), "envelope": hx(tc_env),
     "configurationDigest": hx(config_digest),
 }
@@ -303,17 +302,6 @@ V["E.9 WebAuthn route"] = {
     "rpIdHash": hx(rp_ids[0]),
 }
 
-# ------------------------------------------------------------- AGENT (§8.5.3)
-
-claims = cbor({1: "vaf"})
-issued = 1793592000
-agent_body = cbor([1, "agent-gateway.example.com", nonce, issued, issued + 300, claims])
-agent = b"VCAP-AGENT-SESSION\0" + bytes([6]) + client_aid.encode() + agent_body
-V["E.10 AGENT original (slot 1, CLIENT)"] = {
-    "content": "receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'vaf'",
-    "original": hx(agent), "length": len(agent), "originalDigest": hx(H(agent)),
-}
-
 # ------------------------------------------------------------- negative cases
 
 s_int = int.from_bytes(t_sig[32:], "little")
@@ -366,7 +354,7 @@ ed_verify(role_pub, t_sig, b"VCAP-SIGN\0" + t_body)
 ed_verify(s0c_pub, icp_sig, icp)
 ed_verify(att_pub, state_sig, b"VCAP-STATE\0" + state_body)
 assert len(t_env) <= 512 and len(tc_env) <= 1536 and len(state_body) <= 1536
-assert len(request) <= 2048 and len(agent) <= 512 and len(vcapreq) <= 1023
+assert len(request) <= 2048 and len(vcapreq) <= 1023
 
 json.dump(out, sys.stdout, indent=2, ensure_ascii=False)
 print()
