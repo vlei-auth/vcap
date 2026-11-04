@@ -305,12 +305,12 @@ V["E.9 WebAuthn route"] = {
 
 # ------------------------------------------------------------- AGENT (§8.5.3)
 
-claims = cbor({1: "veridian"})
+claims = cbor({1: "vaf"})
 issued = 1793592000
 agent_body = cbor([1, "agent-gateway.example.com", nonce, issued, issued + 300, claims])
 agent = b"VCAP-AGENT-SESSION\0" + bytes([6]) + client_aid.encode() + agent_body
 V["E.10 AGENT original (slot 1, CLIENT)"] = {
-    "content": "receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'veridian'",
+    "content": "receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'vaf'",
     "original": hx(agent), "length": len(agent), "originalDigest": hx(H(agent)),
 }
 

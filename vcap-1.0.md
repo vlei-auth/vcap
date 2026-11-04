@@ -1,6 +1,6 @@
 # vLEI Client to Authenticator Protocol (VCAP) 1.0
 
-*Editor's Draft — 2 November 2026*
+*Editor's Draft — 4 November 2026*
 
 **Specification identifier:** VCAP-1.0  
 **Editor's Draft URL:** https://vlei-auth.github.io/vcap/  
@@ -300,7 +300,7 @@ UNUSED ────────────────▶ CREATED ────�
 - A context that is not held is zeroized when another transport sends a command that requires a context or a ClientPIN subcommand other than getPinRetries; that command then proceeds normally.
 - A new `getKeyAgreement` on the same transport first zeroizes the old context and then establishes a new one; during an upload it returns `BUSY` per §5.4.
 - A token MUST be first used to authenticate a command within 19 800 ms of issue (the initial usage time limit; CTAP uses this value for NFC, and VCAP applies it to all transports), or it becomes invalid. After first use it remains valid until the context ends (maximum usage period 600 000 ms), with no idle timeout.
-- **Zeroization events:** transport disconnection, `SELECT` of the FIDO AID over NFC or CCID, CCID ICC power-off, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / Reset, and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
+- **Zeroization events:** transport disconnection, `SELECT` of the FIDO AID over NFC or of the CCID AID over CCID, CCID ICC power-off, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / Reset, and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
 
 ### 5.4 Upload State
 
@@ -1298,17 +1298,17 @@ VCAP uses the [NFC binding of CTAP 2.3][ctap-nfc] unchanged, including the FIDO 
 
 ### 11.4 USB CCID
 
-A USB authenticator MAY present a USB CCID interface (USB-IF *Device Class Specification for USB Chip/Smart Card Interface Devices* 1.1, interface class `0x0B`) with one slot holding a permanently present ICC. The ICC carries the APDU layer of the [CTAP NFC binding][ctap-nfc] unchanged: `SELECT` of the FIDO AID, `NFCCTAP_MSG`, command chaining, `GET RESPONSE` and status polling with `NFCCTAP_GETRESPONSE`. A VCAP request and response (§11.1) are the payload of `NFCCTAP_MSG` exactly as over NFC, and the authenticator reassembles requests of at most 2048 bytes. Platforms reach this interface through the operating system's smart-card service (for example PC/SC).
+A USB authenticator MAY present a USB CCID interface (USB-IF *Device Class Specification for USB Chip/Smart Card Interface Devices* 1.1, interface class `0x0B`) with one slot holding a permanently present ICC. The ICC carries the APDU layer of the [CTAP NFC binding][ctap-nfc] with one change: the application is selected with the CCID AID (Appendix A) instead of the FIDO AID, so that platform FIDO stacks that scan smart-card readers for the FIDO AID do not discover the same authenticator a second time next to its CTAPHID interface. The FIDO AID is not selectable over CCID; its `SELECT` returns `6A82`. Everything else is unchanged: `NFCCTAP_MSG`, command chaining, `GET RESPONSE` and status polling with `NFCCTAP_GETRESPONSE`. A VCAP request and response (§11.1) are the payload of `NFCCTAP_MSG` exactly as over NFC, and the authenticator reassembles requests of at most 2048 bytes. Platforms reach this interface through the operating system's smart-card service (for example PC/SC).
 
 The following rules relate it to VCAP:
 
-- **Card session.** A card session begins with `PC_to_RDR_IccPowerOn` and ends with `PC_to_RDR_IccPowerOff`, USB reset or USB detachment. The card session is one transport. `SELECT` of the FIDO AID and the end of the card session both zeroize the context.
+- **Card session.** A card session begins with `PC_to_RDR_IccPowerOn` and ends with `PC_to_RDR_IccPowerOff`, USB reset or USB detachment. The card session is one transport. `SELECT` of the CCID AID and the end of the card session both zeroize the context.
 - **UP.** A card session provides no tap: every UP-requiring request waits for a sensor press (§8.2), and the authenticator reports `STATUS_UPNEEDED` in response to status polling while it waits.
 - **Cancellation.** The platform cancels a UP wait by ending the card session. A Cancel command (§7.3) between two commands remains available.
 - **Ending the card session during a command.** The command ends and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new card session.
 - **Reset window.** The 10-second window of §7.12.1 step 2 runs from USB attachment; an ICC power-on does not reopen it.
 - **Coexistence.** An authenticator that presents both a CTAPHID interface and a CCID interface treats each CTAPHID channel and the card session as separate transports, and applies §5.3 between them.
-- **ATR.** The answer-to-reset is product-defined; platforms identify the authenticator by a successful `SELECT` of the FIDO AID followed by GetInfo `versions` containing `"VCAP_1_0"`.
+- **ATR.** The answer-to-reset is product-defined; platforms identify the authenticator by a successful `SELECT` of the CCID AID followed by GetInfo `versions` containing `"VCAP_1_0"`.
 
 ---
 
@@ -1320,7 +1320,7 @@ This section specifies the steps that platforms and enterprises **MUST** follow 
 
 The platform performs the following steps:
 
-1. Open the transport: allocate a CTAPHID channel (§11.2), or `SELECT` the FIDO AID over NFC (§11.3) or in a CCID card session (§11.4). Confirm that GetInfo `versions` contains `"VCAP_1_0"`.
+1. Open the transport: allocate a CTAPHID channel (§11.2), or `SELECT` the FIDO AID over NFC (§11.3) or the CCID AID in a CCID card session (§11.4). Confirm that GetInfo `versions` contains `"VCAP_1_0"`.
 2. Send ClientPIN getKeyAgreement to obtain the authenticator's keyAgreement; compute contextId per §6.3; generate a new ephemeral P-256 key as the platform keyAgreement for subsequent subcommands.
 3. Ask the user for the PIN and request, in one call, all permissions the operation needs (for example `READ|SIGN` for signing) with getPinUvAuthTokenUsingPinWithPermissions.
 4. Decrypt pinUvAuthToken to obtain the token. The PIN, pinHash, shared secret and token MUST NOT be logged; the PIN entered by the user MUST be cleared on completion, cancellation, backgrounding or unload.
@@ -1494,7 +1494,8 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 
 | Constant | Value |
 |---|---|
-| FIDO AID (NFC and CCID) | `A0 00 00 06 47 2F 00 01` |
+| FIDO AID (NFC) | `A0 00 00 06 47 2F 00 01` |
+| CCID AID (USB CCID) | `F0 43 41 4E 4F 46 49 44` |
 | GetInfo version string | `"VCAP_1_0"` |
 | KERI serialization | KERI 1.0 JSON (`KERI10JSON`) |
 | Complete request / response limit | 2048 bytes |
@@ -1842,15 +1843,15 @@ The two results below carry a StateProof over the state of E.8 with authState `[
 
 ### E.10 AGENT original (slot 1, CLIENT)
 
-receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'veridian'
+receiver 'agent-gateway.example.com', issued 1793592000, expires +300, walletProfile 'vaf'
 
 - **original:**
 
   ```
-  564341502d4147454e542d53455353494f4e0006454b5963333154774d30535178745a61366135725049646e4f64664868423375656965624538686148426134860178196167656e742d676174657761792e6578616d706c652e636f6d5820ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a1a6ae80ac01a6ae80bec4ba10168766572696469616e
+  564341502d4147454e542d53455353494f4e0006454b5963333154774d30535178745a61366135725049646e4f64664868423375656965624538686148426134860178196167656e742d676174657761792e6578616d706c652e636f6d5820ed20f342eaf399465cd1e2dbd6316234a597c5d7f4a3c7b2e90d92faaa37ab2a1a6ae80ac01a6ae80bec46a10163766166
   ```
-- **length:** `149`
-- **originalDigest:** `8c7299b02d28d87656f065fbe0160633c55cba81782f073d5f197b1dfb03a674`
+- **length:** `144`
+- **originalDigest:** `5ee683848f63a6d8c7a301419f52836477e9b206392714d68361ca1e05f24dcf`
 
 ### E.11 Negative Cases
 
