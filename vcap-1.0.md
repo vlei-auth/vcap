@@ -132,7 +132,7 @@ Command names, subcommand names, field names, data structure names, status codes
 | Ticket | A signing authorization object issued by the Ticket issuer (VCAP, §9.2) |
 | TrustConfig | Device configuration signed by the enterprise root key (VCAP, §9.1) |
 | StateProof | Authenticator state signed by the attestation key (VCAP, §9.3) |
-| reset epoch (`resetEpoch`) | A counter incremented by 1 after each successful Reset |
+| reset epoch (`resetEpoch`) | A device-wide counter: 0 when the authenticator leaves manufacturing, incremented by 1 by each successful Reset, and kept across Reset and BindEnterprise (§7.12.3) |
 | atomic commit | A set of persistent writes that take effect entirely or not at all |
 | reset intent record | A record durably written by Reset before secrets are destroyed, used to complete the Reset at the next boot after a power loss |
 | domain separation tag | A fixed string prepended to a signature or MAC input to distinguish its purpose |
@@ -196,7 +196,7 @@ PERSONALIZED_NO_PIN
 PIN_READY ── CreateIdentity / Sign(icp,ixn,rot,exn,rpy) / PrepareRotation / Recover / GetState …
    │ Reset (within 10 s of power-up + 5 s hold)
    ▼
-ENTERPRISE_BOUND (binding unchanged, resetEpoch+1, not personalized) ──> Personalize again
+STOCK_UNBOUND (binding removed, resetEpoch+1) ──> BindEnterprise and Personalize again
 ```
 
 At any stage, if the authenticator finds unrecognized or corrupted data in storage at boot, it enters `RECOVERY_REQUIRED` (§5.1); an incomplete Reset is completed at boot (§7.12.4).
@@ -233,7 +233,7 @@ The `lifecycle` field of status-mode GetState (§7.4.1) reports the following va
 | Value | Name | Meaning |
 |---:|---|---|
 | 0 | STOCK_UNBOUND | Not bound to an enterprise |
-| 1 | ENTERPRISE_BOUND | Bound to a tenant and enterprise root key; not personalized in this reset epoch |
+| 1 | ENTERPRISE_BOUND | Bound to a tenant and enterprise root key; not personalized |
 | 2 | PERSONALIZED_NO_PIN | TrustConfig and four UNUSED slots installed; no PIN set |
 | 3 | PIN_READY | Personalized and PIN set (says nothing about lockout; retry state is reported by ClientPIN) |
 | 4 | RECOVERY_REQUIRED | Storage contains unrecognized or corrupted data |
@@ -246,15 +246,15 @@ Transitions:
 | STOCK_UNBOUND | BindEnterprise succeeds | ENTERPRISE_BOUND | §7.10 |
 | ENTERPRISE_BOUND | Personalize succeeds | PERSONALIZED_NO_PIN, or PIN_READY if a PIN is already set | §7.11 |
 | PERSONALIZED_NO_PIN | setPIN succeeds | PIN_READY | §7.2 |
-| STOCK_UNBOUND | Reset succeeds | STOCK_UNBOUND | §7.12 |
-| ENTERPRISE_BOUND / PERSONALIZED_NO_PIN / PIN_READY | Reset succeeds | ENTERPRISE_BOUND (resetEpoch+1) | §7.12; tenant and enterprise root key retained |
+| STOCK_UNBOUND | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12 |
+| ENTERPRISE_BOUND / PERSONALIZED_NO_PIN / PIN_READY | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12; binding removed |
 | Any | Unrecognized or corrupted data found at boot | RECOVERY_REQUIRED | The affected data is retained until Reset |
-| RECOVERY_REQUIRED | Reset succeeds | ENTERPRISE_BOUND (resetEpoch+1) | §7.12; requires a readable binding record and attestation identity |
-| Any | Valid reset intent record found at boot | ENTERPRISE_BOUND (resetEpoch+1) | Reset completed at boot (§7.12.4) |
+| RECOVERY_REQUIRED | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12; requires a readable attestation identity and reset epoch |
+| Any | Valid reset intent record found at boot | STOCK_UNBOUND (resetEpoch+1) | Reset completed at boot (§7.12.4) |
 
 Constraints:
 
-- The binding is permanent: a bound authenticator cannot be rebound or returned to the factory state.
+- A binding lasts until the next Reset. Only Reset removes it; there is no other way to rebind an authenticator.
 - Missing data **MUST NOT** be treated as UNUSED or not personalized; if `personalized=1` and the configuration or a slot record is missing, the authenticator MUST treat it as corruption.
 - The PIN and FIDO credentials (§7.13) are independent of the lifecycle: a PIN can be set and FIDO credentials created in any lifecycle state other than RECOVERY_REQUIRED.
 - In `RECOVERY_REQUIRED`, every command except `GetInfo`, status-mode `GetState`, `Cancel` and `Reset` (including ClientPIN) returns `RECOVERY_REQUIRED`. Reset is the user's way out of this state (§7.12).
@@ -269,7 +269,7 @@ UNUSED ────────────────▶ CREATED ────�
                                                           │  │   │   next←newNext, prepared deleted
                                                           └──┘◀──┘
                               PrepareRotation (WORK only): sets prepared, head unchanged
-                              Reset: all four slots return to UNUSED (new reset epoch)
+                              Reset: all four slots are deleted (new reset epoch)
 ```
 
 | phase | owner | current / next | prepared | aid / head | signCounter | lastSigned |
@@ -278,7 +278,7 @@ UNUSED ────────────────▶ CREATED ────�
 | CREATED | 1 or 2 | present | null | null | 0 | null |
 | ACTIVE | 1 or 2 | present | WORK only, optional | present | ≥ 1 | present |
 
-- Any mix of owners is permitted, including four WORK slots. Slots are independent of one another and hold no receipts or pending events. A slot keeps its identity until Reset, which returns all slots to UNUSED together.
+- Any mix of owners is permitted, including four WORK slots. Slots are independent of one another and hold no receipts or pending events. A slot keeps its identity until Reset, which deletes all slots together.
 - A CLIENT slot permits ICP / IXN; a WORK slot permits ICP / IXN / ROT / EXN / RPY.
 - When `prepared` exists, a further PrepareRotation returns the existing preparation unchanged.
 - `signCounter` is a persistent per-slot signature counter. It starts at 0 and is incremented by one in the atomic commit of every signature of any kind (§8.7); it never decreases within a reset epoch. Each Ticket names the counter value its signature will receive (§9.2), so each Ticket is usable once.
@@ -320,9 +320,9 @@ IDLE ──UploadBegin ok──▶ RECEIVING(offset=0) ──UploadChunk(correct
 
 ```
 NORMAL ──Reset (within 10 s of power-up) + 5 s hold──▶ reset intent record written ──secrets made unrecoverable──▶
-       employee data deleted, resetEpoch+1 published ──▶ ENTERPRISE_BOUND
+       business state deleted, resetEpoch+1 committed ──▶ STOCK_UNBOUND
 
-power loss after the reset intent record is written ──▶ Reset completed at next boot ──▶ ENTERPRISE_BOUND
+power loss after the reset intent record is written ──▶ Reset completed at next boot ──▶ STOCK_UNBOUND
 ```
 
 Once the reset intent record is written, the Reset runs to completion: it MUST NOT be withdrawn, and secrets MUST be made unrecoverable rather than logically deleted.
@@ -543,7 +543,7 @@ A StateProof carries no lifecycle field: proof mode requires a PIN token, so the
 
 **Parameters:** `{2:challenge_b32, ?3:includeChain}`; `includeChain` is the unsigned integer 1 when present, and any other value is `INVALID_PARAMETER`. **Required permission:** none; no context required. **Result:** BindingProof (§9.5).
 
-Binding mode lets the enterprise learn, without a PIN, which device it is talking to and which reset epoch the device is in, so that it can issue the TrustConfig for that epoch (§12.5 step 3, §12.7 step 3). With `includeChain`, the result also carries the attestation certificate chain, so a verifier that holds only the manufacturer's CA certificates can establish the device's identity from the device itself (Appendix D.2).
+Binding mode lets the enterprise learn, without a PIN, which device it is talking to, whether it is bound and which reset epoch it is in, so that it can issue the TrustConfig for that epoch (§12.5 step 3). With `includeChain`, the result also carries the attestation certificate chain, so a verifier that holds only the manufacturer's CA certificates can establish the device's identity from the device itself (Appendix D.2).
 
 The authenticator performs the following steps:
 
@@ -552,7 +552,7 @@ The authenticator performs the following steps:
 3. Compute `signature = Ed25519(attestation key, "VCAP-BINDING\0" ‖ bindingBody)`.
 4. Return `{1:bindingBody_bstr, 2:signature}`, adding `3:attestationChain` (Appendix D.1) exactly when `includeChain` was present. Any state, including context and upload deadlines, MUST remain unchanged.
 
-A BindingProof proves that the device holding the registered attestation key reported these values in response to the challenge. Because a reset epoch only increases, a BindingProof with a higher epoch than the enterprise has recorded shows that the device has been Reset since, whoever sent the Reset; replaying an old BindingProof can only show a lower epoch. Freshness therefore matters only when the verifier needs to know that the device is present now, and then the verifier generates the challenge.
+A BindingProof proves that the device holding the registered attestation key reported these values in response to the challenge. A binding is removed only by Reset and a reset epoch only increases, so a BindingProof that shows STOCK_UNBOUND, a different tenant or enterprise root, or a higher epoch than the enterprise recorded when it bound the device shows that the device has been Reset since, whoever sent the Reset. A replayed BindingProof can only show an earlier state of the same device. Freshness therefore matters only when the verifier needs to know that the device is present now, and then the verifier generates the challenge.
 
 ### 7.5 CreateIdentity (0x51)
 
@@ -709,7 +709,7 @@ The authenticator performs the following steps:
 
 ### 7.10 BindEnterprise (0x63)
 
-Binds a factory-state device to an enterprise tenant and enterprise root key. The first binding fixes the enterprise root key permanently; the enterprise performs it during enrollment per §12.5.
+Binds a device in STOCK_UNBOUND to an enterprise tenant and enterprise root key until the next Reset. The enterprise performs it during enrollment per §12.5, and again after each Reset.
 
 **Parameters:** `{1:tenant_b32, 2:enterpriseRoot_b32}`; no token authentication. **UP:** yes. **Result:** empty; the context is closed on success.
 
@@ -724,7 +724,7 @@ The authenticator performs the following steps:
 7. Atomically commit the binding record: tenant, enterpriseRoot, personalized=0.
 8. Zeroize the context and return empty success.
 
-The binding is permanent. The enterprise proves control of the enterprise root key at Personalize, through the TrustConfig signed with it.
+BindEnterprise does not change `resetEpoch`. The enterprise proves control of the enterprise root key at Personalize, through the TrustConfig signed with it.
 
 ### 7.11 Personalize (0x60)
 
@@ -744,28 +744,28 @@ The authenticator performs the following steps:
 8. Atomically commit: personalized=1 in the binding record, TrustConfig, four UNUSED slots, and forcePINChange if a PIN is set and its stored code-point length is below `minPinChars`.
 9. After the write completes, zeroize the context and return empty success.
 
-A configuration is installed once per reset epoch; changing role keys or configuration requires a full Reset. An existing PIN and existing FIDO credentials are kept; the lifecycle becomes PIN_READY if a PIN is set and PERSONALIZED_NO_PIN otherwise.
+A configuration is installed once per reset epoch; changing role keys or configuration requires Reset, BindEnterprise and Personalize. An existing PIN and existing FIDO credentials are kept; the lifecycle becomes PIN_READY if a PIN is set and PERSONALIZED_NO_PIN otherwise.
 
 ### 7.12 Reset (0x07)
 
-Makes employee secrets unrecoverable and enters a new reset epoch.
+Makes employee secrets unrecoverable, removes the enterprise binding and enters a new reset epoch.
 
 **Parameters:** none (command byte only, as in CTAP); no token authentication and no context required. **UP:** yes, a **5-second hold**. **Result:** empty.
 
-Reset has the code, power-up window and UP requirement of [CTAP authenticatorReset][ctap-reset]. It differs in that the enterprise binding and attestation identity are kept (§7.12.3) and the touch is held for 5 seconds.
+Reset has the code, power-up window and UP requirement of [CTAP authenticatorReset][ctap-reset]. It differs in that the attestation identity and the reset epoch counter are kept (§7.12.3) and the touch is held for 5 seconds.
 
 #### 7.12.1 Authenticator Processing Steps
 
 1. If the request carries any byte after the command byte, return `INVALID_LENGTH`.
 2. If more than 10 000 ms have passed since this power-up, return `NOT_ALLOWED`. Power-up is the moment the authenticator is powered: USB attachment, or entry into an NFC field. A CCID ICC power-on is not a power-up.
-3. Reset is available in every lifecycle state. In RECOVERY_REQUIRED, if the binding record (tenant, enterpriseRoot, resetEpoch) or the attestation identity cannot be read and verified, return `RECOVERY_REQUIRED`: Reset cannot keep a binding it cannot read, and MUST NOT return the authenticator to STOCK_UNBOUND.
+3. Reset is available in every lifecycle state. If the attestation identity or `resetEpoch` cannot be read and verified, return `RECOVERY_REQUIRED`: Reset cannot keep data it cannot read. An unreadable binding record, TrustConfig or slot state does not prevent Reset.
 4. Determine the set of secrets to destroy: always the PIN record, all private keys of the four slots including pre-rotation historical keys, `handleKey` (§7.14.3), and all FIDO credentials (§7.13).
 5. Collect one UP per §8.2 with **hold = 5000 ms**; on timeout return `USER_ACTION_TIMEOUT`.
 6. Confirm that the transport is still connected (else `OPERATION_DENIED`).
-7. Durably write the reset intent record: the record to be written in step 10 and its digest. **From this step on, the Reset runs to completion and cannot be withdrawn.**
+7. Durably write the reset intent record: the new `resetEpoch` and its digest. **From this step on, the Reset runs to completion and cannot be withdrawn.**
 8. Make all secrets from step 4 unrecoverable, such that an attacker able to read the raw storage medium cannot reconstruct them; logical deletion, unlink or file system garbage collection does not satisfy this requirement. The authenticator MUST confirm that this step has completed before continuing.
-9. Delete the PIN record, all state of the four slots, all FIDO credentials, and TrustConfig. In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
-10. If bound to an enterprise, atomically commit resetEpoch+1 and personalized=0, retaining the attestation identity, tenant and enterpriseRoot. In STOCK_UNBOUND, only the attestation identity remains.
+9. Delete the PIN record, all state of the four slots, all FIDO credentials, TrustConfig and the binding record (tenant, enterpriseRoot, personalized). In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
+10. Commit the new `resetEpoch`. The authenticator is now in STOCK_UNBOUND; only the attestation identity, `resetEpoch` and data outside VCAP that the manufacturer keeps (for example management credentials) remain.
 11. Clear the reset intent record.
 12. Zeroize any existing context and return empty success.
 
@@ -778,8 +778,10 @@ Reset has the code, power-up window and UP requirement of [CTAP authenticatorRes
 
 - Deactivating old AIDs on the network is the enterprise's responsibility (§12.7).
 - Reset applies to all slots and all FIDO credentials together.
-- From RECOVERY_REQUIRED, a successful Reset leaves the authenticator in ENTERPRISE_BOUND with resetEpoch+1, like any other Reset; the unreadable data is destroyed rather than retained.
-- After Reset a bound authenticator is in ENTERPRISE_BOUND, and the new reset epoch requires Personalize only, with the existing binding; an unbound authenticator stays in STOCK_UNBOUND.
+- Every successful Reset, including one from RECOVERY_REQUIRED, leaves the authenticator in STOCK_UNBOUND with resetEpoch+1; unreadable data is destroyed rather than retained.
+- Reset keeps the attestation identity and `resetEpoch`, and does not make the attestation private key unrecoverable. Steps 4 and 8 apply to business secrets only.
+- `resetEpoch` never decreases. A later BindEnterprise, to the same or another enterprise, keeps it, so values signed for an earlier epoch (TrustConfig, KeyRef, slot handles) are never valid again on the same device.
+- To use the authenticator again, the enterprise performs BindEnterprise and Personalize (§12.7).
 
 #### 7.12.4 Completing Reset at Boot
 
@@ -787,6 +789,8 @@ At every boot, before reading other persistent state, the authenticator checks f
 
 1. If no reset intent record exists, boot normally.
 2. If the reset intent record is complete and its digest is correct, execute §7.12.1 steps 8–11 and then boot normally. Steps 8–10 are idempotent.
+
+The result in both cases is the same: business state is empty, and the attestation identity, `resetEpoch` and manufacturer data outside VCAP are unchanged. How the authenticator achieves this, and how it lays out storage, is not specified.
 3. If the reset intent record is incomplete or its digest does not match, clear the record and boot normally. In this case either the write of step 7 did not complete (persistent state is the pre-Reset state) or the clearing of step 11 did not complete (persistent state is the post-Reset state).
 
 Completing Reset at boot requires neither UP nor a context.
@@ -1073,7 +1077,7 @@ The signature is a 64-byte Ed25519 signature over the message, verifiable under 
 | Sign ICP / IXN | The slot's latest (= this event, including the original signature), signature counter and lastSigned |
 | Sign ROT | The slot's keys (current←old.next, next←newNext), latest, signature counter and lastSigned; prepared deleted |
 | Sign EXN / RPY | The slot's signature counter and lastSigned |
-| Reset | Reset intent record → secret destruction → new reset epoch → reset intent record cleared (§7.12) |
+| Reset | Reset intent record → secret destruction and removal of business state → new reset epoch → reset intent record cleared (§7.12) |
 | GetState, Recover | No business write |
 
 Rules:
@@ -1379,16 +1383,16 @@ The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step
 5. Sign(ROT) / upload → one touch → after the authenticator commits, current=old.next, next=newNext, and prepared is deleted.
 6. Recover from a lost response per §12.3.
 
-### 12.7 Reset and the New Reset Epoch
+### 12.7 Reset and Re-enrollment
 
 1. The enterprise decides on a Reset (departure, lost device, blocked PIN, etc.) and, on the enterprise side, deactivates the old CLIENT / WORK AIDs and stops issuing Tickets for the old reset epoch. Reset also erases the employee's FIDO credentials, so relying parties that registered them need re-registration.
 2. Reinsert (USB) or re-tap (NFC) the authenticator and send Reset within 10 s of power-up (§7.12.1 step 2); the user holds the touch for 5 seconds. No PIN is needed, so Reset also works after the PIN is blocked. Generic FIDO clients (browser or operating system settings) can also send Reset and prompt only for a touch; enterprise guidance SHOULD tell users that Reset requires a 5-second hold and erases all identities on the authenticator.
-3. On success the authenticator returns to ENTERPRISE_BOUND (resetEpoch+1). IT reads the actual resetEpoch with binding-mode GetState, issues the TrustConfig for it and personalizes again (§12.5 step 3); the employee sets a PIN and onboards again. IT MUST take the reset epoch from a verified BindingProof or StateProof, never from its own count of Resets.
+3. On success the authenticator is in STOCK_UNBOUND with resetEpoch+1. IT enrolls it again per §12.5 steps 2–3: BindEnterprise, then Personalize with a TrustConfig for the reported resetEpoch. The attestation identity and its certificate are unchanged, so the enterprise can verify the BindingProof with the key it already registered. The employee then sets a PIN and onboards again. IT MUST take the reset epoch from a verified BindingProof, never from its own count of Resets.
 4. The authenticator SHOULD stay connected during Reset; if Reset is interrupted, the authenticator completes it at the next power-up.
 
 A Reset ends the continuity of every AID on the authenticator in the same way as loss of the device; VAF §6.5 specifies the resulting enterprise and credential obligations.
 
-A Reset can also happen without the enterprise: from a generic FIDO client (step 2) or by the holder. The enterprise learns of it when a platform presents a BindingProof or StateProof whose resetEpoch is higher than the one on record (VCAP-EI §9.5), and then meets the obligations of step 1 as for a Reset it ordered.
+A Reset can also happen without the enterprise: from a generic FIDO client (step 2) or by the holder. The enterprise learns of it when a platform presents a BindingProof showing that the device is no longer in the binding the enterprise recorded (§7.4.3, VCAP-EI §9.5), and then meets the obligations of step 1 as for a Reset it ordered.
 
 ### 12.8 Enterprise Ticket Issuance Requirements
 
@@ -1459,8 +1463,8 @@ A user who dismisses the browser dialog causes `CTAPHID_CANCEL`, handled per §1
 4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.13), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
 5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform, or any page served from an RP ID listed in `webauthnRpIds`, can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8). The enterprise lists only RP IDs whose pages it controls. Pages on other RP IDs cannot detect the VCAP function: the authenticator answers them as a security key without it (§7.14.1).
 6. **Browser compatibility:** the WebAuthn route depends on browsers and platform authenticator APIs forwarding the private algorithm identifier, credential IDs of up to 1023 bytes and an opaque `signature` unchanged. Where a platform does not, the native route (§7.4–§7.12) remains available.
-7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility. Enterprises SHOULD tell users what Reset erases (§12.7 step 2). Such a Reset leaves no enterprise record; the enterprise detects it from the reset epoch in the next BindingProof or StateProof (§12.7).
-8. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch, and the attestation certificate chain, which also names the manufacturer and anything the manufacturer puts in the certificates. Manufacturers SHOULD NOT place per-customer data in attestation certificates. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands; a device left in ENTERPRISE_BOUND after a Reset discloses these values until it is personalized again.
+7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility. Enterprises SHOULD tell users what Reset erases (§12.7 step 2). Such a Reset also removes the enterprise binding: afterwards any party can bind the authenticator to its own enterprise, as with a factory-new one, so the binding does not prevent reuse of a lost or stolen authenticator. It leaves no enterprise record; the enterprise detects it from the next BindingProof (§7.4.3, §12.7).
+8. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch, and the attestation certificate chain, which also names the manufacturer and anything the manufacturer puts in the certificates. Manufacturers SHOULD NOT place per-customer data in attestation certificates. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands. After a Reset the device is in STOCK_UNBOUND and discloses only the device identifier and the certificate chain.
 
 ### 13.3 PIN
 
@@ -1867,7 +1871,7 @@ An authenticator rejects each of the following. The Ticket uses the body of E.5;
 
 ### E.12 Binding mode
 
-Uses the existing E.0 inputs and challenge. ENTERPRISE_BOUND has resetEpoch E.0 + 1; PERSONALIZED_NO_PIN uses the E.0 TrustConfig.
+Uses the existing E.0 inputs and challenge. The ENTERPRISE_BOUND vector uses resetEpoch 1, the value after one Reset and a new BindEnterprise; PERSONALIZED_NO_PIN uses the E.0 TrustConfig. The vectors are given states, not outputs of a particular sequence of commands.
 
 #### STOCK_UNBOUND
 
