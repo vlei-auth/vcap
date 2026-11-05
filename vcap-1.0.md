@@ -12,7 +12,7 @@
 
 **Scope:** Authenticator firmware, and the parts of wallets, enterprise Ticket issuers and manufacturing tools that interact directly with the authenticator.
 
-**Abstract:** This document defines the protocol between a vLEI Key authenticator and a platform: the transport, the command set, the processing steps the authenticator performs for each command, data structures and status codes, and the procedures that wallets and enterprises follow when using the authenticator.
+**Abstract:** This document defines the protocol between a hardware authenticator for KERI keys and a platform: the transport, the command set, the processing steps the authenticator performs for each command, data structures and status codes, and the procedures that wallets and enterprises follow when using the authenticator.
 
 ---
 
@@ -43,15 +43,16 @@
 
 ### 1.1 Purpose
 
-The vLEI Key is a personal KERI signing device with a touch sensor. An employee's KERI private keys exist only inside the authenticator.
+The authenticator is a personal KERI signing device with a touch sensor, for example an enterprise-issued security key used with vLEI credentials. An employee's KERI private keys exist only inside the authenticator.
 
-Because both the platform running the wallet and the enterprise services may be compromised, the following five rules are enforced by the authenticator itself:
+Because both the platform and the enterprise services may be compromised, the authenticator itself enforces the following properties. This list is an overview; the requirements are stated in Sections 5–8, and the resulting guarantees in §13.1.
 
-1. **Private keys stay in the authenticator.** The PIN failure count is kept in the authenticator and survives power loss. Every signature requires one deliberate user action (user presence, UP): a press of the touch sensor, or over NFC the tap that brings the authenticator into the reader's field.
-2. **Every signature is authorized by the enterprise.** Each signature requires a Ticket issued by an enterprise role key. The Ticket specifies the slot's next signature counter, the signing key, and the digest and length of the message to be signed; each Ticket is usable for exactly one signature.
-3. **Rotation stays within authenticator-generated keys.** The current key and next key in `icp` MUST be two keys generated inside the authenticator. A `rot` MUST be signed with the previously committed next key, and the newly committed next key MUST be freshly generated inside the authenticator. Even if the platform and the enterprise services are both compromised, an attacker therefore cannot rotate the identity to a key outside the authenticator.
-4. **Events advance one at a time.** Events in a slot advance strictly in sequence (sequence number `s` incremented by 1, `p` referencing the previous event), so with intact persistent storage each slot produces at most one event per sequence number.
-5. **Each signature is committed once.** A signature is durably committed in the authenticator before it is returned to the platform. The signature of the latest key event and the most recent signature of the slot remain retrievable with Recover, so a lost response yields the original signature rather than a new one. The authenticator stores no message. After a successful Reset, the PIN record and all private keys of the old reset epoch are unrecoverable.
+1. **Private keys stay in the authenticator.** No command imports or exports a private key.
+2. **Each signature needs the user.** Every signature requires the PIN-authorized platform and one deliberate user action (user presence, UP): a press of the touch sensor, or over NFC the tap that brings the authenticator into the reader's field. The PIN failure count is kept in the authenticator and survives power loss.
+3. **Every signature is authorized by the enterprise.** Each signature requires a Ticket issued by an enterprise role key. The Ticket specifies the slot's next signature counter, the signing key, and the digest and length of the message to be signed; each Ticket is usable for exactly one signature.
+4. **Rotation stays within authenticator-generated keys.** The current key and next key in `icp` are two keys generated inside the authenticator. A `rot` is signed with the previously committed next key, and the newly committed next key is freshly generated inside the authenticator. Even if the platform and the enterprise services are both compromised, an attacker therefore cannot rotate the identity to a key outside the authenticator.
+5. **Events advance one at a time.** Events in a slot advance strictly in sequence (sequence number `s` incremented by 1, `p` referencing the previous event), so with intact persistent storage each slot produces at most one event per sequence number.
+6. **Each signature is committed once.** A signature is durably committed in the authenticator before it is returned to the platform. The signature of the latest key event and the most recent signature of the slot remain retrievable with Recover, so a lost response yields the original signature rather than a new one. The authenticator stores no message. After a successful Reset, the PIN record and all private keys of the old reset epoch are unrecoverable.
 
 This document specifies the authenticator state model, the parameters and processing algorithm of each command, data structures and status codes, for use by firmware implementers, wallets, enterprise services and external auditors.
 
@@ -71,11 +72,11 @@ The key words "**MUST**", "**MUST NOT**", "**REQUIRED**", "**SHOULD**", "**SHOUL
 
 | Class | Implements | Sections that apply |
 |---|---|---|
-| **Authenticator** | Firmware and hardware of the vLEI Key | §§ 5–11, Appendices A and B; §7.14 when the WebAuthn route is implemented |
+| **Authenticator** | Firmware and hardware of the authenticator | §§ 5–11, Appendices A and B; §7.14 when the WebAuthn route is implemented |
 | **Platform** | Software that sends VCAP commands: wallets, IT tools, manufacturing tools | §§ 6, 9, 10, 11 (as sender) and 12.1–12.7 |
 | **Web platform** | An enterprise web page using the WebAuthn route | §§ 7.14, 12.9 |
 | **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7–12.9, Appendix D |
-| **Manufacturer** | Producer of the attestation identity | Appendix D.1, D.3 |
+| **Manufacturer** | Producer of the attestation identity | Appendix D.1, D.5; D.3 when it delivers enrollment packages |
 
 An Authenticator implements at least one transport of Section 11 and declares in GetInfo `transports` exactly the transports it implements (§7.1). The following features are optional; an Authenticator that implements one implements all of its requirements:
 
@@ -84,7 +85,7 @@ An Authenticator implements at least one transport of Section 11 and declares in
 | USB HID transport | §11.2 |
 | NFC transport | §11.3 |
 | USB CCID transport | §11.4 |
-| WebAuthn route | §7.14 |
+| WebAuthn route (provisional: its encoding may change in a later version of this document) | §7.14 |
 
 ### 2.2 Normative Statements
 
@@ -103,7 +104,7 @@ Command names, subcommand names, field names, data structure names, status codes
 
 | Term | Meaning |
 |---|---|
-| authenticator | The hardware signing device in this protocol, i.e. the vLEI Key |
+| authenticator | The hardware signing device that implements this protocol |
 | platform | Software that communicates directly with the authenticator, such as a wallet, an IT tool or a manufacturing tool |
 | enterprise | The organization that holds the enterprise root key and operates the Ticket issuer and gateway |
 | manufacturer | The party that generates the attestation identity and issues its certificate chain at manufacturing time |
@@ -173,7 +174,7 @@ Manufacturer ── generates attestation identity, issues certificate chain ─
 Enterprise root key ── bound by BindEnterprise; signs TrustConfig (registers role keys) ──▶ Authenticator
 Role key ── issues Ticket ──▶ Platform ──▶ Authenticator
 
-Authenticator (attestation key, 4 slots) ◀─CTAPHID / NFC / CCID─▶ Platform (wallet) ◀─HTTPS─▶ Ticket issuer / gateway ──▶ KERIA / witnesses / recipients
+Authenticator (attestation key, 4 slots) ◀─CTAPHID / NFC / CCID─▶ Platform ◀─HTTPS─▶ Ticket issuer / gateway ──▶ agent / witnesses / recipients
 ```
 
 - The authenticator trusts only: its own attestation identity, the enterprise root key bound by BindEnterprise, the TrustConfig role keys installed under a signature of the enterprise root key, and the employee's PIN and touch.
@@ -417,7 +418,7 @@ Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and ar
 | 0x07 | Reset | none | None; within 10 s of power-up | **Yes (5 s hold)** | Empty | Yes |
 | 0x08 | authenticatorGetNextAssertion | As CTAP (§7.13) | — | No | As CTAP | No |
 | 0x0B | authenticatorSelection | As CTAP (§7.13) | None | **Yes** | As CTAP | No |
-| 0x50 | GetState | Status mode: `{}`; proof mode: `{1:challenge_b32}`; binding mode: `{2:challenge_b32}` | Status and binding modes: none (public); proof mode: READ | No | Status mode: `{1:lifecycle}`; proof mode: StateProof; binding mode: BindingProof | No |
+| 0x50 | GetState | Status mode: `{}`; proof mode: `{1:challenge_b32}`; binding mode: `{2:challenge_b32, ?3:1}` | Status and binding modes: none (public); proof mode: READ | No | Status mode: `{1:lifecycle}`; proof mode: StateProof; binding mode: BindingProof | No |
 | 0x51 | CreateIdentity | `{1:slot,2:owner,3:challenge_b32}` | READ+MANAGE | No | StateProof | No |
 | 0x53 | Sign | `{1:slot,2:kind,3:ticket_bstr,4:original_bstr}` | SIGN | **Yes** | Signed | No |
 | 0x54 | PrepareRotation | `{1:slot,2:challenge_b32}` | READ+SIGN | No | StateProof | No |
@@ -443,7 +444,7 @@ For each completely reassembled request, the authenticator performs the followin
 2. If an upload is in progress and the command is not `GetInfo` / status-mode `GetState` / `Cancel` / `UploadChunk` / `UploadEnd`, return `BUSY`; the upload MUST NOT be zeroized.
 3. If a context exists and its context or token deadline has passed (§8.1 step 4): when the command needs that context (it requires a token permission, or is UploadChunk / UploadEnd), return `PIN_TOKEN_EXPIRED` and zeroize the context; otherwise zeroize the context and continue.
 4. Decode `command_u8`; an unknown command returns `INVALID_COMMAND`. Decode the parameters per §6.1.
-5. If the command is `GetInfo`, execute §7.1. If the command is status-mode `GetState`, execute §7.4.1. If the command is binding-mode `GetState` (GetState whose parameter map is exactly `{2:challenge_b32}`), execute §7.4.3. If the command is `Cancel`, execute §7.3.
+5. If the command is `GetInfo`, execute §7.1. If the command is status-mode `GetState`, execute §7.4.1. If the command is binding-mode `GetState` (GetState whose parameter map is exactly `{2:challenge_b32}` or `{2:challenge_b32, 3:1}`), execute §7.4.3. If the command is `Cancel`, execute §7.3.
 6. If the authenticator is in `RECOVERY_REQUIRED` and the command is not Reset, return `RECOVERY_REQUIRED`.
 7. If the command is `ClientPIN`, execute §7.2. If the command is a standard CTAP operation, execute it per §7.14 when the request is VCAP-wrapped (§7.14.1), and otherwise as §7.13 specifies.
 8. If the command requires a token permission, determine the required permission from the command table in §7.0 and execute §8.1. Otherwise (except Reset) a context is required; if absent, return `PUAT_REQUIRED`.
@@ -504,7 +505,7 @@ GetState has two modes, selected by its parameters:
 
 - **Status mode:** empty parameter map. Reports the lifecycle without authentication, in every lifecycle state.
 - **Proof mode:** a challenge and token authentication. Returns the complete state of the four slots, signed with the attestation key.
-- **Binding mode:** a challenge under key 2, without authentication. Before the PIN is set, returns the device identifier, lifecycle and enterprise binding, including the current reset epoch, signed with the attestation key.
+- **Binding mode:** a challenge under key 2, without authentication. Before the PIN is set, returns the device identifier, lifecycle and enterprise binding, including the current reset epoch, signed with the attestation key, and on request the attestation certificate chain.
 
 A request with key 1 but without pinUvAuthParam returns `PUAT_REQUIRED`. Any other parameter combination, including keys 1 and 2 together, returns `INVALID_PARAMETER`. No mode requires UP or writes persistent state.
 
@@ -540,16 +541,16 @@ A StateProof carries no lifecycle field: proof mode requires a PIN token, so the
 
 #### 7.4.3 Binding Mode
 
-**Parameters:** `{2:challenge_b32}`. **Required permission:** none; no context required. **Result:** BindingProof (§9.5).
+**Parameters:** `{2:challenge_b32, ?3:includeChain}`; `includeChain` is the unsigned integer 1 when present, and any other value is `INVALID_PARAMETER`. **Required permission:** none; no context required. **Result:** BindingProof (§9.5).
 
-Binding mode lets the enterprise learn, without a PIN, which device it is talking to and which reset epoch the device is in, so that it can issue the TrustConfig for that epoch (§12.5 step 3, §12.7 step 3).
+Binding mode lets the enterprise learn, without a PIN, which device it is talking to and which reset epoch the device is in, so that it can issue the TrustConfig for that epoch (§12.5 step 3, §12.7 step 3). With `includeChain`, the result also carries the attestation certificate chain, so a verifier that holds only the manufacturer root can establish the device's identity from the device itself (Appendix D.2).
 
 The authenticator performs the following steps:
 
 1. If the lifecycle is PIN_READY, return `INVALID_STATE`; in that state proof mode (§7.4.2) reports the same fields. If the lifecycle is RECOVERY_REQUIRED, return `RECOVERY_REQUIRED`.
 2. Construct `bindingBody` (§9.5) from the attestation identity, the lifecycle and, unless the lifecycle is STOCK_UNBOUND, the binding record and (in PERSONALIZED_NO_PIN) the installed TrustConfig.
 3. Compute `signature = Ed25519(attestation key, "VCAP-BINDING\0" ‖ bindingBody)`.
-4. Return `{1:bindingBody_bstr, 2:signature}`. Any state, including context and upload deadlines, MUST remain unchanged.
+4. Return `{1:bindingBody_bstr, 2:signature}`, adding `3:attestationChain` (Appendix D.1) exactly when `includeChain` was present. Any state, including context and upload deadlines, MUST remain unchanged.
 
 A BindingProof proves that the device holding the registered attestation key reported these values in response to the challenge. Because a reset epoch only increases, a BindingProof with a higher epoch than the enterprise has recorded shows that the device has been Reset since, whoever sent the Reset; replaying an old BindingProof can only show a lower epoch. Freshness therefore matters only when the verifier needs to know that the device is present now, and then the verifier generates the challenge.
 
@@ -807,7 +808,7 @@ These operations follow CTAP, with the following VCAP rules:
 
 ### 7.14 VCAP Operations over WebAuthn
 
-This section defines an optional feature (§2.1). An authenticator MAY implement it; one that does not lists no `VCAP_ALG` in GetInfo and processes every authenticatorMakeCredential and authenticatorGetAssertion per §7.13. The route is provisional: it depends on browsers and platforms forwarding the private algorithm identifier, long credential IDs and an opaque signature unchanged, and its encoding may change in a later version.
+This section defines an optional feature (§2.1). An authenticator MAY implement it; one that does not lists no `VCAP_ALG` in GetInfo and processes every authenticatorMakeCredential and authenticatorGetAssertion per §7.13. It depends on browsers and platforms forwarding the private algorithm identifier, long credential IDs and an opaque signature unchanged (§13.2 item 6).
 
 A web page can invoke CreateIdentity, Sign, proof-mode GetState, PrepareRotation and Recover through the standard WebAuthn API, with no software on the platform other than the browser. The browser carries the request to the authenticator as an ordinary authenticatorMakeCredential or authenticatorGetAssertion. The authenticator recognizes a VCAP request by a private COSE algorithm identifier and by payloads placed in fields that clients forward unchanged, and returns the result in fields that clients return to the page unchanged.
 
@@ -1051,7 +1052,7 @@ Complete JSON; total length matches `v`; `t="rpy"`. Route, identity and business
 
 #### 8.5.3 Kind 6 (Reserved)
 
-Kind 6 and capability bit 5 are reserved and MUST NOT be assigned. Earlier drafts used them for an AGENT session message signed by a CLIENT slot; reading from the Agent now relies on the enterprise bearer token alone (VCAP-EI §7.11). An authenticator returns `INVALID_PARAMETER` for kind 6 (§7.7 step 2), and a TrustConfig containing bit 5 fails Personalize (Appendix B).
+Kind 6 and capability bit 5 are reserved and MUST NOT be assigned. An authenticator returns `INVALID_PARAMETER` for kind 6 (§7.7 step 2), and a TrustConfig containing bit 5 fails Personalize (Appendix B).
 
 ### 8.6 Signature Computation
 
@@ -1171,7 +1172,7 @@ Sign, UploadEnd and Recover use this same structure; `signCounter` is the slot's
 ### 9.5 BindingProof
 
 ```
-BindingProof = {1:bindingBody_bstr, 2:signature_b64}
+BindingProof = {1:bindingBody_bstr, 2:signature_b64, ?3:attestationChain}
                ; signature = Ed25519(attestation key, "VCAP-BINDING\0" ‖ bindingBody)
 bindingBody  = [2, device_b32, lifecycle, challenge_b32, binding / null]   ; ≤ 256 bytes
 binding      = [tenant_b32, enterpriseRootDigest_b32, resetEpoch, configurationDigest_b32 / null]
@@ -1180,7 +1181,8 @@ binding      = [tenant_b32, enterpriseRootDigest_b32, resetEpoch, configurationD
 - `lifecycle` is 0, 1 or 2 (§5.1); `binding` is null exactly when it is 0.
 - `enterpriseRootDigest` is H(enterpriseRoot) from the binding record, so the enterprise can confirm the device is bound to its root without the proof carrying the key itself.
 - `configurationDigest` is H(installed TrustConfig envelope) in PERSONALIZED_NO_PIN and null in ENTERPRISE_BOUND.
-- Verifiers verify a BindingProof with the device's registered attestation public key (Appendix D), as for a StateProof.
+- Verifiers verify a BindingProof with the device's registered attestation public key (Appendix D), as for a StateProof. A verifier that has no registered key yet verifies key 3 per Appendix D.2, takes `attestationPublic` from its leaf, checks that `device` in `bindingBody` equals `H("VCAP-DEVICE-ID\0" ‖ attestationPublic)`, and then verifies the signature with that key.
+- Key 3 is outside the signature; it authenticates itself through the manufacturer root. The complete response including key 3 stays within the 2048-byte limit (§7.0, Appendix A).
 
 ---
 
@@ -1321,9 +1323,9 @@ After a PIN error (`PIN_INVALID`) the context has been zeroized; the platform MU
 5. Prompt the user to touch once (over NFC, the tap counts as the touch).
 6. On receiving Signed, verify the signature independently with the expected public key, and check that originalDigest and originalLength match the Outbox; for a KEL signature also check the expected head.
 7. Archive to the enterprise; the UI shows "signed and archived".
-8. Network publication and witness acceptance complete in the background; the UI shows "committed locally", "archived by enterprise", "accepted by network" and "business authorized" separately.
+8. Network publication and witness acceptance complete in the background; the platform reports "committed locally", "archived by enterprise", "accepted by network" and "business authorized" as separate states.
 
-Consecutive signatures reuse the valid token, the archived head and consecutive counter values. The authenticator checks the KEL seq / prior and the actual key itself: if the head the enterprise relied on is outdated, Sign returns `INVALID_KERI_EVENT` or `KEY_BINDING` and outputs no signature. That error zeroizes the context and the user must enter the PIN again, so a platform in doubt about its local head SHOULD perform step 0 before requesting a Ticket. A Ticket rejected only because the counter moved (`TICKET_INVALID`) indicates that another signature happened in between; the platform reconciles per §12.3 before requesting a new Ticket.
+Consecutive signatures reuse the valid token, the archived head and consecutive counter values. The authenticator checks the KEL seq / prior and the actual key itself: if the head the enterprise relied on is outdated, Sign returns `INVALID_KERI_EVENT` or `KEY_BINDING` and outputs no signature. That error zeroizes the context, so the platform obtains a new token with a new PIN entry; a platform in doubt about its local head SHOULD perform step 0 before requesting a Ticket. A Ticket rejected only because the counter moved (`TICKET_INVALID`) indicates that another signature happened in between; the platform reconciles per §12.3 before requesting a new Ticket.
 
 ### 12.3 Lost Response Recovery
 
@@ -1332,7 +1334,7 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 **KEL signatures (ICP / IXN / ROT):**
 
 1. Establish a new context with permission READ.
-2. GetState (new challenge); check whether the slot's signature counter equals the Ticket's `signCounter` and the head is the expected seq / said / originalDigest, and check the actual keys (after ROT, current should be old.next).
+2. GetState (new challenge); check whether the slot's signature counter equals the Ticket's `signCounter` and the head is the expected seq / said / originalDigest, and check the actual keys (after ROT, current equals the former old.next).
 3. If the head equals the expected event: obtain the message from the Outbox or from the enterprise (authorized retrieval by `(device, slot, said, originalDigest)`) → call Recover with `originalDigest` → verify the returned signature independently against the message → archive.
 4. If the head is still the previous event, the earlier signature was not committed; the enterprise decides whether to issue a new Ticket, and the platform MUST NOT re-sign automatically.
 5. If a later event already exists, obtain the original signature from the enterprise's historical archive.
@@ -1354,19 +1356,19 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 | Step | Actor | Authenticator command | UP |
 |---|---|---|---|
 | 1 | Manufacturer | Manufacturing tool creates STOCK, generates attestation identity and issues the certificate chain (offline) | — |
-| 2 | Enterprise IT | Verify the certificate chain (Appendix D) and register the attestation public key → binding-mode GetState with a new challenge: verify it under the registered key and confirm that the lifecycle is STOCK_UNBOUND → getKeyAgreement → BindEnterprise(tenant, enterprise root key) | 1 |
+| 2 | Enterprise IT | Binding-mode GetState with a new challenge and `includeChain` → verify the chain against the manufacturer root (Appendix D.2), register the attestation public key, verify the BindingProof under it and confirm that the lifecycle is STOCK_UNBOUND → getKeyAgreement → BindEnterprise(tenant, enterprise root key) | 1 |
 | 3 | Enterprise IT | Binding-mode GetState with a new challenge → issue the TrustConfig for the reported device, tenant and resetEpoch → getKeyAgreement → Personalize(TrustConfig) | 1 |
 | 4 | Employee | getKeyAgreement → setPIN | 0 |
 | 5 | Employee | getKeyAgreement → obtain token (READ\|MANAGE\|SIGN) → CreateIdentity(CLIENT) | 0 |
 | 6 | Employee | GetState → enterprise issues Ticket → Sign(ICP, CLIENT) | 1 |
-| 7 | Enterprise | Create the employee's agent from the archived CLIENT icp and its original signature (for KERIA, the boot request); no additional device signature is needed | 0 |
+| 7 | Enterprise | Create the employee's agent from the archived CLIENT icp and its original signature, as the agent profile defines (VCAP-EI §1.2); no additional device signature is needed | 0 |
 | 8 | Employee | Sign(IXN, CLIENT): Agent approval | 1 |
 | 9 | Employee | CreateIdentity(WORK) → Sign(ICP, WORK) | 1 |
 | 10 | Employee | Sign(RPY, WORK): Agent end-role | 1 |
 
 On the native route, steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature. On the WebAuthn route (§12.9) each of steps 5, 6, 8, 9 and 10 is one browser call, the two parts of step 9 being separate calls, with one PIN entry and one UP each.
 
-The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys, and SHOULD NOT set the PIN: the device is handed to the employee in PERSONALIZED_NO_PIN, and step 4 takes place on the employee's platform. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before calling KERIA to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
+The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys, and SHOULD NOT set the PIN: the device is handed to the employee in PERSONALIZED_NO_PIN, and step 4 takes place on the employee's platform. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before creating the agent, to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
 
 ### 12.6 Rotation (WORK)
 
@@ -1396,7 +1398,7 @@ The enterprise Ticket issuer MUST:
    - a fresh StateProof obtained with a challenge **generated by the enterprise and used only once**;
    - the enterprise's archived head and signature counter (from archived Signed results, or a head advanced by network acceptance). For ICP the current / next keys come from the StateProof returned by CreateIdentity, and for ROT newNext comes from the StateProof returned by PrepareRotation.
 
-   The authenticator checks whether the head and counter are current. Slot state cached by the wallet is never a state basis.
+   The authenticator checks whether the head and counter are current. Slot state cached by the platform is never a state basis.
 2. Durably store the message before issuing the Ticket; audit IDs stay within the enterprise.
 3. Fully verify route, receiving domain, risk and content authorization, and reject a message that has duplicate keys in any JSON object; for KEL events also verify the SAID, prior event, witnesses, delegation and network acceptance.
 4. Set `signCounter` to the slot's current counter + 1. When it issues another Ticket for a counter value that already has an unused Ticket (for example because the user abandoned the earlier request), it treats the earlier Ticket as still usable until the counter advances, and identifies which message was signed by the `originalDigest` in Signed. When in doubt about device state, require the platform to submit a fresh StateProof.
@@ -1457,8 +1459,8 @@ A user who dismisses the browser dialog causes `CTAPHID_CANCEL`, handled per §1
 4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.13), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
 5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform, or any page served from an RP ID listed in `webauthnRpIds`, can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8). The enterprise lists only RP IDs whose pages it controls. Pages on other RP IDs cannot detect the VCAP function: the authenticator answers them as a security key without it (§7.14.1).
 6. **Browser compatibility:** the WebAuthn route depends on browsers and platform authenticator APIs forwarding the private algorithm identifier, credential IDs of up to 1023 bytes and an opaque `signature` unchanged. Where a platform does not, the native route (§7.4–§7.12) remains available.
-7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility and is accepted in VCAP 1.0; enterprise guidance tells users what Reset erases (§12.7). Such a Reset leaves no enterprise record; the enterprise detects it from the reset epoch in the next BindingProof or StateProof (§12.7).
-8. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands; a device left in ENTERPRISE_BOUND after a Reset discloses these values until it is personalized again.
+7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility. Enterprises SHOULD tell users what Reset erases (§12.7 step 2). Such a Reset leaves no enterprise record; the enterprise detects it from the reset epoch in the next BindingProof or StateProof (§12.7).
+8. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch, and the attestation certificate chain, which also names the manufacturer and anything the manufacturer puts in the certificates. Manufacturers SHOULD NOT place per-customer data in attestation certificates. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands; a device left in ENTERPRISE_BOUND after a Reset discloses these values until it is personalized again.
 
 ### 13.3 PIN
 
@@ -1496,7 +1498,7 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | Number of slots | 4 |
 | TrustConfig roles | 1..8; keyId 1..16 bytes |
 | TrustConfig webauthnRpIds | 0..4 |
-| VCAP_ALG | -65700 (COSE, private use; WebAuthn route only, provisional) |
+| VCAP_ALG | -65700 (COSE, private use; WebAuthn route only) |
 | VCAPREQ | ≤ 1023 bytes |
 | Slot signature counter | 0..2^32−1 |
 | CBOR depth / item count | ≤ 16 / ≤ 1024 |
@@ -1518,7 +1520,7 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | WORK | EXN | 11 | `0x0800` | Message |
 | WORK | RPY | 12 | `0x1000` | Message |
 
-All valid bits: `0x1F03` (7 capabilities); message role bits: `0x1800`. Any other bit (e.g. CLIENT ROT, or bit 5, formerly CLIENT AGENT and now reserved) is invalid; a capabilityMask containing an invalid bit, or equal to zero, causes Personalize to fail.
+All valid bits: `0x1F03` (7 capabilities); message role bits: `0x1800`. Any other bit (e.g. CLIENT ROT, or the reserved bit 5) is invalid; a capabilityMask containing an invalid bit, or equal to zero, causes Personalize to fail.
 
 ## Appendix C References
 
@@ -1562,7 +1564,7 @@ All valid bits: `0x1F03` (7 capabilities); message role bits: `0x1800`. Any othe
 
 ## Appendix D Attestation Certificate Chain and Enrollment Records
 
-The attestation identity (§3.1) is an Ed25519 key pair generated at manufacturing together with a certificate chain issued by the manufacturer. The chain is stored in the authenticator but no VCAP command returns it; the manufacturer delivers it to the enterprise for enrollment (VAF §3.1, §9.5).
+The attestation identity (§3.1) is an Ed25519 key pair generated at manufacturing together with a certificate chain issued by the manufacturer. The chain is stored in the authenticator and is returned by binding-mode GetState with `includeChain` (§7.4.3) while the device is not in PIN_READY. The enterprise therefore needs only the manufacturer root to enroll a device; no per-device file is required (VAF §3.1, §9.5).
 
 ### D.1 Certificate Chain
 
@@ -1596,7 +1598,7 @@ The leaf's public key is `attestationPublic`, and the device identifier is `devi
 An enterprise (or any verifier of StateProof) performs the following steps once, at enrollment:
 
 1. Obtain the manufacturer root certificate through a trusted channel independent of the device and of the platform. The root is the trust anchor; it MUST equal the last chain entry byte for byte.
-2. Verify the chain per D.1 at the current time.
+2. Obtain the chain from the device (binding-mode GetState with `includeChain`, §7.4.3), or from an enrollment package (D.3), and verify it per D.1 at the current time.
 3. Take `attestationPublic` from the leaf and compute `device`.
 4. Bind (device, attestationPublic) to the enrollment record (D.4). Thereafter verify every StateProof and WebAuthn `deviceSig` with that enrolled key (§9.3, §7.14.5).
 
@@ -1610,7 +1612,7 @@ The manufacturer delivers, for each device:
 EnrollmentPackage = [1, device_b32, attestationPublic_b32, attestationChain]
 ```
 
-A manufacturer MUST deliver the enrollment package in this form. The enterprise MUST recompute `device` and `attestationPublic` from the chain (D.2) and reject a package whose fields disagree. The package carries no secret.
+Enrollment packages are optional: the chain is available from the device itself (D.2 step 2). A manufacturer that delivers packages, for example as a delivery manifest the enterprise checks against its purchase order, MUST use this form. The enterprise MUST recompute `device` and `attestationPublic` from the chain (D.2) and reject a package whose fields disagree. The package carries no secret.
 
 ### D.4 Enterprise Asset Record (informative)
 
@@ -1819,9 +1821,9 @@ The two results below carry a StateProof over the state of E.8 with authState `[
   ```
 - **rpIdHash:** `02e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a`
 
-### E.10 (Unassigned)
+### E.10 (Reserved)
 
-Formerly the AGENT original; kind 6 is reserved (§8.5.3).
+This appendix number is not used.
 
 ### E.11 Negative Cases
 
