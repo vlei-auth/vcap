@@ -107,14 +107,14 @@ Command names, subcommand names, field names, data structure names, status codes
 | authenticator | The hardware signing device that implements this protocol |
 | platform | Software that communicates directly with the authenticator, such as a wallet, an IT tool or a manufacturing tool |
 | enterprise | The organization that holds the enterprise root key and operates the Ticket issuer and gateway |
-| manufacturer | The party that generates the attestation identity and issues its certificate chain at manufacturing time |
+| manufacturer | The party that provisions the attestation identity and issues its leaf certificate |
 | Ticket issuer | The enterprise service that issues Tickets |
 | transport | One logical link: one CTAPHID channel over USB HID, one NFC field session, or one CCID card session (§11.4) |
 | context | Volatile state established by ClientPIN getKeyAgreement and bound to one transport, comprising the key agreement key, contextId, token and upload state |
 | pinUvAuthToken (token) | A 32-byte random value issued after successful PIN verification, used to authenticate subsequent commands |
 | user presence (UP) | One new press of the touch sensor by the user, or over NFC one tap into the reader's field (§8.2) |
 | attestation key / attestation public key | The Ed25519 key pair in the authenticator used to sign StateProof |
-| attestation identity | The attestation key together with the certificate chain issued for it by the manufacturer |
+| attestation identity | The attestation key together with the leaf certificate issued for it by the manufacturer |
 | enterprise root key | The enterprise public key bound by BindEnterprise and used to verify TrustConfig (field `enterpriseRoot`) |
 | role key | A public key registered in TrustConfig and used to issue Tickets |
 | tenant | Digest of the enterprise identifier (§6.3) |
@@ -170,7 +170,7 @@ Command names, subcommand names, field names, data structure names, status codes
 ### 4.1 Participants and Trust Relationships
 
 ```
-Manufacturer ── generates attestation identity, issues certificate chain ──▶ Authenticator
+Manufacturer ── provisions attestation identity, issues leaf certificate ──▶ Authenticator
 Enterprise root key ── bound by BindEnterprise; signs TrustConfig (registers role keys) ──▶ Authenticator
 Role key ── issues Ticket ──▶ Platform ──▶ Authenticator
 
@@ -543,7 +543,7 @@ A StateProof carries no lifecycle field: proof mode requires a PIN token, so the
 
 **Parameters:** `{2:challenge_b32, ?3:includeChain}`; `includeChain` is the unsigned integer 1 when present, and any other value is `INVALID_PARAMETER`. **Required permission:** none; no context required. **Result:** BindingProof (§9.5).
 
-Binding mode lets the enterprise learn, without a PIN, which device it is talking to and which reset epoch the device is in, so that it can issue the TrustConfig for that epoch (§12.5 step 3, §12.7 step 3). With `includeChain`, the result also carries the attestation certificate chain, so a verifier that holds only the manufacturer root can establish the device's identity from the device itself (Appendix D.2).
+Binding mode lets the enterprise learn, without a PIN, which device it is talking to and which reset epoch the device is in, so that it can issue the TrustConfig for that epoch (§12.5 step 3, §12.7 step 3). With `includeChain`, the result also carries the attestation certificate chain, so a verifier that holds only the manufacturer's CA certificates can establish the device's identity from the device itself (Appendix D.2).
 
 The authenticator performs the following steps:
 
@@ -1182,7 +1182,7 @@ binding      = [tenant_b32, enterpriseRootDigest_b32, resetEpoch, configurationD
 - `enterpriseRootDigest` is H(enterpriseRoot) from the binding record, so the enterprise can confirm the device is bound to its root without the proof carrying the key itself.
 - `configurationDigest` is H(installed TrustConfig envelope) in PERSONALIZED_NO_PIN and null in ENTERPRISE_BOUND.
 - Verifiers verify a BindingProof with the device's registered attestation public key (Appendix D), as for a StateProof. A verifier that has no registered key yet verifies key 3 per Appendix D.2, takes `attestationPublic` from its leaf, checks that `device` in `bindingBody` equals `H("VCAP-DEVICE-ID\0" ‖ attestationPublic)`, and then verifies the signature with that key.
-- Key 3 is outside the signature; it authenticates itself through the manufacturer root. The complete response including key 3 stays within the 2048-byte limit (§7.0, Appendix A).
+- Key 3 is outside the signature; it is authenticated through the manufacturer's CA certificates (Appendix D.2). The complete response including key 3 stays within the 2048-byte limit (§7.0, Appendix A).
 
 ---
 
@@ -1355,8 +1355,8 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 
 | Step | Actor | Authenticator command | UP |
 |---|---|---|---|
-| 1 | Manufacturer | Manufacturing tool creates STOCK, generates attestation identity and issues the certificate chain (offline) | — |
-| 2 | Enterprise IT | Binding-mode GetState with a new challenge and `includeChain` → verify the chain against the manufacturer root (Appendix D.2), register the attestation public key, verify the BindingProof under it and confirm that the lifecycle is STOCK_UNBOUND → getKeyAgreement → BindEnterprise(tenant, enterprise root key) | 1 |
+| 1 | Manufacturer | Provisions the attestation identity and delivers the authenticator in STOCK_UNBOUND (Appendix D.5) | — |
+| 2 | Enterprise IT | Binding-mode GetState with a new challenge and `includeChain` → verify the chain against the manufacturer's CA certificates (Appendix D.2), register the attestation public key, verify the BindingProof under it and confirm that the lifecycle is STOCK_UNBOUND → getKeyAgreement → BindEnterprise(tenant, enterprise root key) | 1 |
 | 3 | Enterprise IT | Binding-mode GetState with a new challenge → issue the TrustConfig for the reported device, tenant and resetEpoch → getKeyAgreement → Personalize(TrustConfig) | 1 |
 | 4 | Employee | getKeyAgreement → setPIN | 0 |
 | 5 | Employee | getKeyAgreement → obtain token (READ\|MANAGE\|SIGN) → CreateIdentity(CLIENT) | 0 |
@@ -1564,32 +1564,32 @@ All valid bits: `0x1F03` (7 capabilities); message role bits: `0x1800`. Any othe
 
 ## Appendix D Attestation Certificate Chain and Enrollment Records
 
-The attestation identity (§3.1) is an Ed25519 key pair generated at manufacturing together with a certificate chain issued by the manufacturer. The chain is stored in the authenticator and is returned by binding-mode GetState with `includeChain` (§7.4.3) while the device is not in PIN_READY. The enterprise therefore needs only the manufacturer root to enroll a device; no per-device file is required (VAF §3.1, §9.5).
+The attestation identity (§3.1) is an Ed25519 key pair with a leaf certificate issued by the manufacturer. The authenticator stores the leaf and returns it in binding-mode GetState with `includeChain` (§7.4.3) while the device is not in PIN_READY. The enterprise configures the manufacturer's CA certificates once and needs no per-device file to enroll a device (VAF §3.1, §9.5).
 
 ### D.1 Certificate Chain
 
 ```
-attestationChain = [+ certificate_bstr]      ; 1..4 entries, leaf first, root last
+attestationChain = [+ certificate_bstr]      ; 1..3 entries, leaf first, each next entry the issuer of the previous
 certificate      = X.509 v3 certificate, DER  ; each ≤ 2048 bytes
 ```
 
-The deterministic CBOR encoding of `attestationChain` MUST NOT exceed 1400 bytes.
+The deterministic CBOR encoding of `attestationChain` MUST NOT exceed 1400 bytes. An authenticator SHOULD return the leaf alone. It MAY append issuing CA certificates and SHOULD NOT append the root.
 
-Each certificate MUST satisfy:
+The **certification path** is the leaf, the issuing CA certificates between it and the root, and the manufacturer root, at most 4 certificates in all. Each certificate of the path MUST satisfy:
 
 | Item | Requirement |
 |---|---|
 | Encoding | DER; re-encoding the parsed certificate yields the same bytes |
 | Subject public key | Ed25519, and a safe public key (§9.1 role.public constraints) |
 | Signature algorithm | Ed25519 (OID 1.3.101.112), no parameters, 64-byte signature |
-| Issuer | Equals the subject of the next certificate; the last certificate is self-issued |
-| Signature | Verifies under the next certificate's public key (the last under its own) |
+| Issuer | Equals the subject of the next certificate of the path; the root is self-issued |
+| Signature | Verifies under the next certificate's public key (the root under its own) |
 | Validity | The verification time lies within notBefore..notAfter |
-| BasicConstraints | Present. `cA` is FALSE for the leaf and TRUE for every other certificate; if `pathLenConstraint` is present it is not exceeded |
+| BasicConstraints | Present. `cA` is FALSE for the leaf and TRUE for every CA certificate; if `pathLenConstraint` is present it is not exceeded |
 | KeyUsage | If present: `digitalSignature` for the leaf, `keyCertSign` for the others |
 | Critical extensions | Only BasicConstraints and KeyUsage may be critical |
 
-A chain of exactly one certificate is a self-issued certificate for the attestation key itself; it then has `cA` TRUE. It is intended for development devices only.
+Development devices use a development root and the same path structure; a self-issued leaf is not a valid path.
 
 The leaf's public key is `attestationPublic`, and the device identifier is `device = H("VCAP-DEVICE-ID\0" ‖ attestationPublic_raw32)` (§6.3).
 
@@ -1597,8 +1597,8 @@ The leaf's public key is `attestationPublic`, and the device identifier is `devi
 
 An enterprise (or any verifier of StateProof) performs the following steps once, at enrollment:
 
-1. Obtain the manufacturer root certificate through a trusted channel independent of the device and of the platform. The root is the trust anchor; it MUST equal the last chain entry byte for byte.
-2. Obtain the chain from the device (binding-mode GetState with `includeChain`, §7.4.3), or from an enrollment package (D.3), and verify it per D.1 at the current time.
+1. Obtain the manufacturer's CA certificates through a trusted channel independent of the device and of the platform: the root, which is the trust anchor, and the issuing CA certificates.
+2. Obtain the chain from the device (binding-mode GetState with `includeChain`, §7.4.3), or from an enrollment package (D.3). Build the certification path from the leaf: the issuer of each certificate is the next chain entry if there is one, otherwise the configured CA certificate whose subject equals its issuer name. A chain entry equal to the configured root byte for byte ends the path. The path MUST use every chain entry, MUST end at the configured root and MUST satisfy D.1 at the current time.
 3. Take `attestationPublic` from the leaf and compute `device`.
 4. Bind (device, attestationPublic) to the enrollment record (D.4). Thereafter verify every StateProof and WebAuthn `deviceSig` with that enrolled key (§9.3, §7.14.5).
 
@@ -1628,7 +1628,7 @@ AssetRecord = [1, device_b32, tenant_tstr, resetEpoch, enterpriseRoot_b32,
 
 ### D.5 Attestation Identity in the Authenticator
 
-The authenticator stores the attestation private key and `attestationChain` in a read-only record written at manufacturing, protected by an integrity check. A record that fails its integrity check puts the authenticator into `RECOVERY_REQUIRED` (§5.1).
+The authenticator holds the attestation private key and `attestationChain`. No VCAP command returns the private key or changes either value, and a Reset leaves both unchanged. If the authenticator detects that either has been corrupted, it enters `RECOVERY_REQUIRED` (§5.1). How the manufacturer provisions them is outside this specification.
 
 ## Appendix E Test Vectors
 
