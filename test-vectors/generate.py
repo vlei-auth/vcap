@@ -347,6 +347,92 @@ mismatch_body = cbor([2, device, tenant, reset_epoch + 1, 0x03, 6, roles, rp_ids
 mismatch_env = cbor([mismatch_body, ed_sign(root_sk, b"VCAP-TRUST\0" + mismatch_body)])
 N["Personalize epoch mismatch"] = {"configuration": hx(mismatch_env), "status": "f8"}
 
+# ------------------------------------------- Group member signing (§8.4.4, §9.4)
+
+B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+
+def b64int(n, width):
+    return "".join(B64[(n >> (6 * (width - 1 - i))) & 63] for i in range(width))
+
+
+def indexed_sig(sig, index, ondex=None):
+    """CESR indexed Ed25519 signature: A (equal indices < 64), 2A (dual), B (current only)."""
+    assert len(sig) == 64
+    tail = base64.urlsafe_b64encode(b"\x00\x00" + sig).decode()[2:]
+    if ondex is None:
+        assert index < 64
+        return "B" + b64int(index, 1) + tail
+    if index == ondex and index < 64:
+        return "A" + b64int(index, 1) + tail
+    return "2A" + b64int(index, 2) + b64int(ondex, 2) + tail
+
+
+m2c_seed, m2n_seed = label_seed("member2-current"), label_seed("member2-next")
+_, m2c_pub = ed_keypair(m2c_seed)
+_, m2n_pub = ed_keypair(m2n_seed)
+s0nn_sk, s0nn_pub = ed_keypair(label_seed("slot0-newnext"))
+s0n_sk, _ = ed_keypair(s0_next_seed)
+
+# Group of two members; slot 0 is the second entry, so its index is 1.
+g_icp, gaid = keri_event([
+    ("v", ""), ("t", "icp"), ("d", ""), ("i", ""), ("s", "0"),
+    ("kt", "2"), ("k", [qb64("D", m2c_pub), qb64("D", s0c_pub)]),
+    ("nt", "2"), ("n", [commit(m2n_pub), commit(s0n_pub)]),
+    ("bt", "0"), ("b", []), ("c", []), ("a", []),
+], said_labels=("d", "i"))
+# Slot 0 signs: own icp (counter 1), group icp under kind 7 (counter 2).
+g_t_body, g_t_sig, g_t_env = ticket(7, kref0, 2, g_icp)
+g_icp_sig = ed_sign(s0c_sk, g_icp)
+g_signed = cbor({1: g_icp_sig, 2: s0c_pub, 3: H(g_icp), 4: len(g_icp), 5: 2})
+g_record = [0, gaid, "icp", 0, gaid, len(g_icp), H(g_icp), 2, 0, 0]
+g_slots = [[0, WORK, 2, s0c_pub, s0n_pub, NULL, aid, [1, 0, aid, len(icp), H(icp)], 2],
+           empty_slot(1), empty_slot(2), empty_slot(3)]
+g_state_body = cbor([2, device, reset_epoch, config_digest, challenge, auth_state, g_slots, g_record])
+g_state_sig = ed_sign(att_sk, b"VCAP-STATE\0" + g_state_body)
+g_state_proof = cbor({1: g_state_body, 2: g_state_sig})
+g_getstate_P = {1: challenge, 4: gaid}
+
+# Group rot after slot 0 has rotated its own AID (current <- old next, next <- newnext).
+# The new member list puts slot 0 first, so its current index (0) differs from its ondex (1).
+g_rot, g_rot_said = keri_event([
+    ("v", ""), ("t", "rot"), ("d", ""), ("i", gaid), ("s", "1"), ("p", gaid),
+    ("kt", "2"), ("k", [qb64("D", s0n_pub), qb64("D", m2n_pub)]),
+    ("nt", "2"), ("n", [commit(s0nn_pub), commit(ed_keypair(label_seed("member2-newnext"))[1])]),
+    ("bt", "0"), ("br", []), ("ba", []), ("a", []),
+], said_labels=("d",))
+g_rot_sig = ed_sign(s0n_sk, g_rot)
+
+# Group exn (kind 9): an IPEX grant skeleton sent by the group AID.
+g_exn, g_exn_said = keri_event([
+    ("v", ""), ("t", "exn"), ("d", ""), ("i", gaid), ("rp", client_aid), ("p", ""),
+    ("dt", "2026-11-07T00:00:00.000000+00:00"), ("r", "/ipex/grant"), ("q", {}),
+    ("a", {"m": ""}), ("e", {}),
+], said_labels=("d",))
+g_exn_sig = ed_sign(s0c_sk, g_exn)
+
+V["E.13 Group member signing"] = {
+    "member2 currentPublic": hx(m2c_pub), "member2 nextPublic": hx(m2n_pub),
+    "group icp (UTF-8)": g_icp.decode(), "group icp length": len(g_icp),
+    "group icp originalDigest": hx(H(g_icp)), "group AID": gaid,
+    "GROUP Ticket envelope (kind 7, signCounter 2)": hx(g_t_env),
+    "GROUP Signed": hx(g_signed),
+    "GetState proof-mode parameters with groupAid (before 254/255)": hx(cbor(g_getstate_P)),
+    "stateBody with group element": hx(g_state_body),
+    "StateProof with group element": hx(g_state_proof),
+    "indexed signature, group icp (index 1, code A)": indexed_sig(g_icp_sig, 1, 1),
+    "group rot s=1 (UTF-8)": g_rot.decode(),
+    "indexed signature, group rot (index 0, ondex 1, code 2A)": indexed_sig(g_rot_sig, 0, 1),
+    "indexed signature, current-only code B (form a joining member uses; index 0)": indexed_sig(g_rot_sig, 0),
+    "group exn (UTF-8)": g_exn.decode(),
+    "indexed signature, group exn (index 1, code A)": indexed_sig(g_exn_sig, 1, 1),
+}
+ed_verify(s0c_pub, g_icp_sig, g_icp)
+ed_verify(att_pub, g_state_sig, b"VCAP-STATE\0" + g_state_body)
+assert len(g_t_env) <= 512 and len(g_state_body) <= 1536
+assert len(indexed_sig(g_icp_sig, 1, 1)) == 88 and len(indexed_sig(g_rot_sig, 0, 1)) == 92
+assert len(indexed_sig(g_rot_sig, 0)) == 88
+
 # --------------------------------------------------------------- self-check
 
 ed_verify(root_pub, tc_sig, b"VCAP-TRUST\0" + tc_body)
