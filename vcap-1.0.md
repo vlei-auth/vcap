@@ -1,6 +1,6 @@
 # vLEI Client to Authenticator Protocol (VCAP) 1.0
 
-*Editor's Draft — 7 November 2026*
+*Editor's Draft — 10 November 2026*
 
 **Specification identifier:** VCAP-1.0  
 **Editor's Draft URL:** https://vlei-auth.github.io/vcap/  
@@ -52,7 +52,7 @@ Because both the platform and the enterprise services may be compromised, the au
 3. **Every signature is authorized by the enterprise.** Each signature requires a Ticket issued by an enterprise role key. The Ticket specifies the slot's next signature counter, the signing key, and the digest and length of the message to be signed; each Ticket is usable for exactly one signature.
 4. **Rotation stays within authenticator-generated keys.** The current key and next key in `icp` are two keys generated inside the authenticator. A `rot` is signed with the previously committed next key, and the newly committed next key is freshly generated inside the authenticator. Even if the platform and the enterprise services are both compromised, an attacker therefore cannot rotate the identity to a key outside the authenticator.
 5. **Events advance one at a time.** Events in a slot advance strictly in sequence (sequence number `s` incremented by 1, `p` referencing the previous event), so with intact persistent storage each slot produces at most one event per sequence number. On an authenticator that implements group member signing (§8.4.4), a slot signs, for each group AID it takes part in, only at increasing sequence numbers and at most one event per sequence number, except for at most one explicitly authorized replacement per sequence number.
-6. **Each signature is committed once.** A signature is durably committed in the authenticator before it is returned to the platform. The signature of the latest key event, the most recent signature of the slot and the signature held in each of its group records remain retrievable with Recover, so a lost response yields the original signature rather than a new one. The authenticator stores no message. After a successful Reset, the PIN record and all private keys of the old reset epoch are unrecoverable.
+6. **Each signature is committed once.** A signature is durably committed in the authenticator before it is returned to the platform. The signature of the latest key event, the most recent signature of the slot and the signature held in each of its group records remain retrievable with Recover, so a lost response yields the original signature rather than a new one. The authenticator stores no message. After a successful Reset, the PIN record and all private keys of the old reset epoch are deleted and can no longer be used through any interface of the authenticator (§13.2 item 10).
 
 This document specifies the authenticator state model, the parameters and processing algorithm of each command, data structures and status codes, for use by firmware implementers, wallets, enterprise services and external auditors.
 
@@ -133,9 +133,8 @@ Command names, subcommand names, field names, data structure names, status codes
 | Ticket | A signing authorization object issued by the Ticket issuer (VCAP, §9.2) |
 | TrustConfig | Device configuration signed by the enterprise root key (VCAP, §9.1) |
 | StateProof | Authenticator state signed by the attestation key (VCAP, §9.3) |
-| reset epoch (`resetEpoch`) | A device-wide counter: 0 when the authenticator leaves manufacturing, incremented by 1 by each successful Reset, and kept across Reset and BindEnterprise (§7.12.3) |
+| reset epoch (`resetEpoch`) | A device-wide counter: 0 when the authenticator leaves manufacturing, increased by 1 by each Reset that reaches its epoch commit, never decreased, and kept across Reset and BindEnterprise (§7.12.3) |
 | atomic commit | A set of persistent writes that take effect entirely or not at all |
-| reset intent record | A record durably written by Reset before secrets are destroyed, used to complete the Reset at the next boot after a power loss |
 | domain separation tag | A fixed string prepended to a signature or MAC input to distinguish its purpose |
 | zeroize | Clear and invalidate volatile secrets and state |
 | safe public key | An Ed25519 public key in canonical encoding that is not a small-order point and lies in the prime-order subgroup |
@@ -203,7 +202,7 @@ PIN_READY ── CreateIdentity / Sign(icp,ixn,rot,exn,rpy) / PrepareRotation / 
 STOCK_UNBOUND (binding removed, resetEpoch+1) ──> BindEnterprise and Personalize again
 ```
 
-At any stage, if the authenticator finds unrecognized or corrupted data in storage at boot, it enters `RECOVERY_REQUIRED` (§5.1); an incomplete Reset is completed at boot (§7.12.4).
+At any stage, if the authenticator finds unrecognized or corrupted data in storage at boot, it enters `RECOVERY_REQUIRED` (§5.1). An interrupted Reset is not resumed; the user repeats it (§7.12.2).
 
 ### 4.3 A Normal Signature
 
@@ -228,7 +227,7 @@ The enterprise approves based on its archived head and signature counter, so the
 
 ## 5. Authenticator State Model
 
-Authenticator state consists of **persistent state** (lifecycle, four slots, PIN record, reset intent record) and **volatile state** (context, token, upload, power-cycle lockout count, power-up time).
+Authenticator state consists of **persistent state** (lifecycle, four slots, PIN record, reset epoch) and **volatile state** (context, token, upload, power-cycle lockout count, power-up time).
 
 ### 5.1 Device Lifecycle
 
@@ -254,7 +253,6 @@ Transitions:
 | ENTERPRISE_BOUND / PERSONALIZED_NO_PIN / PIN_READY | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12; binding removed |
 | Any | Unrecognized or corrupted data found at boot | RECOVERY_REQUIRED | The affected data is retained until Reset |
 | RECOVERY_REQUIRED | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12; requires a readable attestation identity and reset epoch |
-| Any | Valid reset intent record found at boot | STOCK_UNBOUND (resetEpoch+1) | Reset completed at boot (§7.12.4) |
 
 Constraints:
 
@@ -324,13 +322,10 @@ IDLE ──UploadBegin ok──▶ RECEIVING(offset=0) ──UploadChunk(correct
 ### 5.5 Reset State
 
 ```
-NORMAL ──Reset (within 10 s of power-up) + 5 s hold──▶ reset intent record written ──secrets made unrecoverable──▶
-       business state deleted, resetEpoch+1 committed ──▶ STOCK_UNBOUND
-
-power loss after the reset intent record is written ──▶ Reset completed at next boot ──▶ STOCK_UNBOUND
+NORMAL ──Reset (within 10 s of power-up) + 5 s hold──▶ business state deleted, resetEpoch+1 committed ──▶ STOCK_UNBOUND
 ```
 
-Once the reset intent record is written, the Reset runs to completion: it MUST NOT be withdrawn, and secrets MUST be made unrecoverable rather than logically deleted.
+Reset defines no intermediate state, and the authenticator keeps no record of a Reset in progress. A Reset that fails or loses power before it returns is repeated by the user; an interrupted Reset never leaves an old slot key usable (§7.12.2).
 
 ---
 
@@ -379,9 +374,9 @@ The enterprise identifier is a string chosen by the enterprise: 1..128 bytes of 
 | Business signatures, attestation signatures | Ed25519 (RFC 8032) | Any computation that yields signatures verifying under RFC 8032 conforms (§8.6). Verification rules below. Public keys received from outside MUST be safe public keys (§3.1) |
 | Digest | SHA-256 | |
 | KERI next key commitment / E encoding | BLAKE3-256 | As defined by KERI |
-| PIN protocol | [CTAP PIN/UV Auth Protocol Two][ctap-pinproto2] (P-256 ECDH, HKDF-SHA-256, AES-256-CBC, HMAC-SHA-256) | §7.2 |
+| PIN protocol | [CTAP PIN/UV Auth Protocol Two][ctap-pinproto2] (P-256 ECDH, HKDF-SHA-256, AES-256-CBC, HMAC-SHA-256); [Protocol One][ctap-pinproto1] in addition MAY be offered to standard CTAP clients | §7.2 |
 
-Each purpose has one fixed algorithm; algorithms are not negotiated.
+Each purpose has one fixed algorithm; algorithms are not negotiated. The only exception is PIN/UV Auth Protocol One, which is available to standard CTAP operations and never grants or verifies a VCAP permission (§7.2).
 
 **Ed25519 verification.** Every party that verifies a VCAP signature (the authenticator for TrustConfig and Tickets; platforms and enterprises for StateProof, Signed and `deviceSig`) MUST verify per RFC 8032 §5.1.7 with these additional rules, so that all implementations accept exactly the same signatures:
 
@@ -464,10 +459,10 @@ GetInfo is [CTAP authenticatorGetInfo][ctap-getinfo]. The request and the encodi
 
 | Key | Name | VCAP value |
 |---:|---|---|
-| 0x01 | versions | MUST contain `"VCAP_1_0"`, which announces this protocol; platforms detect VCAP support from it. MAY in addition contain `"FIDO_2_1"` and `"FIDO_2_3"`; no other value. For example `["FIDO_2_1", "FIDO_2_3", "VCAP_1_0"]` |
+| 0x01 | versions | MUST contain `"VCAP_1_0"`, which announces this protocol; platforms detect VCAP support from it. MAY in addition contain `"FIDO_2_0"`, `"FIDO_2_1"` and `"FIDO_2_3"`; no other value. For example `["FIDO_2_0", "FIDO_2_1", "FIDO_2_3", "VCAP_1_0"]` |
 | 0x04 | options | `clientPin` as CTAP; `pinUvAuthToken`: true; `noMcGaPermissionsWithClientPin` absent, so browsers obtain `mc` / `ga` tokens with the PIN; `vcapGroup`: true exactly when group member signing (§8.4.4) is implemented, and absent otherwise |
 | 0x05 | maxMsgSize | 2048 |
-| 0x06 | pinUvAuthProtocols | `[2]` |
+| 0x06 | pinUvAuthProtocols | `[2, 1]` when Protocol One is offered (§7.2), otherwise `[2]`; Protocol Two is always listed first |
 | 0x08 | maxCredentialIdLength | At least 1023 (the largest VCAPREQ, §7.14.5) when the WebAuthn route is implemented; otherwise as the product supports |
 | 0x09 | transports | Exactly the transports implemented: `"usb"` (CTAPHID, §11.2), `"nfc"` (§11.3), `"smart-card"` (CCID, §11.4) |
 | 0x0A | algorithms | ES256 (-7) and EdDSA (-8) for standard operations; in addition `VCAP_ALG` (-65700) when the WebAuthn route is implemented (§7.14) |
@@ -479,7 +474,7 @@ The VCAP lifecycle is reported by status-mode GetState (§7.4.1), not by GetInfo
 
 ### 7.2 ClientPIN (0x06)
 
-ClientPIN is [CTAP authenticatorClientPIN][ctap-clientpin] with [PIN/UV Auth Protocol Two][ctap-pinproto2] only. Its subcommands, parameters, responses, PIN encoding, PIN retry counter (8) and power-cycle lockout (3 consecutive failures) are as CTAP defines them. The authenticator supports the subcommands getPinRetries (0x01), getKeyAgreement (0x02), setPIN (0x03), changePIN (0x04), getPinToken (0x05) and getPinUvAuthTokenUsingPinWithPermissions (0x09); the others return `INVALID_SUBCOMMAND`, and `pinUvAuthProtocol ≠ 2` returns `INVALID_PARAMETER`.
+ClientPIN is [CTAP authenticatorClientPIN][ctap-clientpin] with [PIN/UV Auth Protocol Two][ctap-pinproto2] and, optionally, [PIN/UV Auth Protocol One][ctap-pinproto1]. Its subcommands, parameters, responses, PIN encoding, PIN retry counter (8) and power-cycle lockout (3 consecutive failures) are as CTAP defines them. The authenticator supports the subcommands getPinRetries (0x01), getKeyAgreement (0x02), setPIN (0x03), changePIN (0x04), getPinToken (0x05) and getPinUvAuthTokenUsingPinWithPermissions (0x09); the others return `INVALID_SUBCOMMAND`, and a `pinUvAuthProtocol` the authenticator does not offer returns `INVALID_PARAMETER`.
 
 VCAP adds the following rules:
 
@@ -488,6 +483,7 @@ VCAP adds the following rules:
 3. **Permissions.** Besides the CTAP permissions, a token can carry the VCAP permissions `READ` (0x0100), `SIGN` (0x0200) and `MANAGE` (0x0400) (§7.0). VCAP permissions are not bound to an RP ID. Permissions are not accumulated: a new token replaces the previous one with exactly the requested permissions. A token from getPinToken carries only the CTAP permissions `mc` and `ga`, as CTAP defines for it, and never a VCAP permission, so it serves generic clients (§7.13, §7.14) but not VCAP commands, which require getPinUvAuthTokenUsingPinWithPermissions.
 4. **Token lifetime.** The token's lifetime follows §5.3 (an initial usage time limit of 19 800 ms on every transport, then valid until the context ends). The token carries no user-presence state, so every UP-requiring command collects a new UP (§8.2).
 5. **Lifecycle.** A successful setPIN in a personalized authenticator moves the lifecycle to PIN_READY (§5.1). In RECOVERY_REQUIRED every subcommand returns `RECOVERY_REQUIRED`.
+6. **Protocol One.** Protocol One exists only so that standard CTAP clients that do not use Protocol Two can set and change the PIN and obtain `mc` / `ga` / `cm` tokens. getPinUvAuthTokenUsingPinWithPermissions under Protocol One that requests READ, SIGN or MANAGE returns `UNAUTHORIZED_PERMISSION`. A token issued under Protocol One authenticates only standard CTAP operations, including VCAP-wrapped requests (§7.14), with pinUvAuthParam verified as CTAP defines for that protocol; VCAP commands accept only Protocol Two (§8.1 step 2).
 
 ### 7.3 Cancel (0x57)
 
@@ -758,7 +754,7 @@ A configuration is installed once per reset epoch; changing role keys or configu
 
 ### 7.12 Reset (0x07)
 
-Makes employee secrets unrecoverable, removes the enterprise binding and enters a new reset epoch.
+Deletes employee secrets, removes the enterprise binding and enters a new reset epoch.
 
 **Parameters:** none (command byte only, as in CTAP); no token authentication and no context required. **UP:** yes, a **5-second hold**. **Result:** empty.
 
@@ -769,41 +765,29 @@ Reset has the code, power-up window and UP requirement of [CTAP authenticatorRes
 1. If the request carries any byte after the command byte, return `INVALID_LENGTH`.
 2. If more than 10 000 ms have passed since this power-up, return `NOT_ALLOWED`. Power-up is the moment the authenticator is powered: USB attachment, or entry into an NFC field. A CCID ICC power-on is not a power-up.
 3. Reset is available in every lifecycle state. If the attestation identity or `resetEpoch` cannot be read and verified, return `RECOVERY_REQUIRED`: Reset cannot keep data it cannot read. An unreadable binding record, TrustConfig or slot state does not prevent Reset.
-4. Determine the set of secrets to destroy: always the PIN record, all private keys of the four slots including pre-rotation historical keys, `handleKey` (§7.14.3), and all FIDO credentials (§7.13).
-5. Collect one UP per §8.2 with **hold = 5000 ms**; on timeout return `USER_ACTION_TIMEOUT`.
-6. Confirm that the transport is still connected (else `OPERATION_DENIED`).
-7. Durably write the reset intent record: the new `resetEpoch` and its digest. **From this step on, the Reset runs to completion and cannot be withdrawn.**
-8. Make all secrets from step 4 unrecoverable, such that an attacker able to read the raw storage medium cannot reconstruct them; logical deletion, unlink or file system garbage collection does not satisfy this requirement. The authenticator MUST confirm that this step has completed before continuing.
-9. Delete the PIN record, all state of the four slots, all FIDO credentials, TrustConfig and the binding record (tenant, enterpriseRoot, personalized). In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
-10. Commit the new `resetEpoch`. The authenticator is now in STOCK_UNBOUND; only the attestation identity, `resetEpoch` and data outside VCAP that the manufacturer keeps (for example management credentials) remain.
-11. Clear the reset intent record.
-12. Zeroize any existing context and return empty success.
+4. Collect one UP per §8.2 with **hold = 5000 ms**; on timeout return `USER_ACTION_TIMEOUT`.
+5. Confirm that the transport is still connected (else `OPERATION_DENIED`).
+6. Delete the PIN record, all state and private keys of the four slots (including pre-rotation historical keys and group records), `handleKey` (§7.14.3), all FIDO credentials (§7.13), TrustConfig and the binding record (tenant, enterpriseRoot, personalized). In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
+7. Increase `resetEpoch` by 1 and commit it.
+8. Zeroize any existing context and return empty success.
+
+Steps 6 and 7 MAY be performed in either order, and step 6 MAY consist of several separate writes. The authenticator is then in STOCK_UNBOUND; only the attestation identity, `resetEpoch` and data outside VCAP that the manufacturer keeps (for example management credentials) remain.
 
 #### 7.12.2 Failure Semantics
 
-- Any failure before step 7: no persistent change.
-- Any failure or power loss after step 7: the Reset is completed at the next boot (§7.12.4).
+- Any failure before step 6: no persistent change.
+- A failure or power loss during steps 6–7 leaves a state that this document does not define. The authenticator does not resume the Reset at boot, and keeps no record that a Reset was in progress. It MUST ensure only that (a) `resetEpoch` has not decreased, and (b) no slot key, TrustConfig or slot handle of the old reset epoch can be used afterwards: at the next boot the authenticator is in STOCK_UNBOUND or RECOVERY_REQUIRED. The user repeats Reset, which then completes from either state.
+- If an interrupted Reset had already committed the new `resetEpoch`, the repeated Reset increases it again. The enterprise therefore takes the epoch from a BindingProof (§12.7 step 3) and treats any higher value as a Reset.
 
 #### 7.12.3 Scope of Reset
 
 - Deactivating old AIDs on the network is the enterprise's responsibility (§12.7).
 - Reset applies to all slots and all FIDO credentials together.
-- Every successful Reset, including one from RECOVERY_REQUIRED, leaves the authenticator in STOCK_UNBOUND with resetEpoch+1; unreadable data is destroyed rather than retained.
-- Reset keeps the attestation identity and `resetEpoch`, and does not make the attestation private key unrecoverable. Steps 4 and 8 apply to business secrets only.
+- Every successful Reset, including one from RECOVERY_REQUIRED, leaves the authenticator in STOCK_UNBOUND with a higher `resetEpoch`; unreadable data is deleted rather than retained.
+- Reset keeps the attestation identity and `resetEpoch`. Step 6 applies to business secrets only.
+- Deletion is logical: Reset is not required to overwrite or erase the storage medium (§13.2 item 10).
 - `resetEpoch` never decreases. A later BindEnterprise, to the same or another enterprise, keeps it, so values signed for an earlier epoch (TrustConfig, KeyRef, slot handles) are never valid again on the same device.
 - To use the authenticator again, the enterprise performs BindEnterprise and Personalize (§12.7).
-
-#### 7.12.4 Completing Reset at Boot
-
-At every boot, before reading other persistent state, the authenticator checks for a reset intent record:
-
-1. If no reset intent record exists, boot normally.
-2. If the reset intent record is complete and its digest is correct, execute §7.12.1 steps 8–11 and then boot normally. Steps 8–10 are idempotent.
-
-The result in both cases is the same: business state is empty, and the attestation identity, `resetEpoch` and manufacturer data outside VCAP are unchanged. How the authenticator achieves this, and how it lays out storage, is not specified.
-3. If the reset intent record is incomplete or its digest does not match, clear the record and boot normally. In this case either the write of step 7 did not complete (persistent state is the pre-Reset state) or the clearing of step 11 did not complete (persistent state is the post-Reset state).
-
-Completing Reset at boot requires neither UP nor a context.
 
 ### 7.13 Standard CTAP Operations
 
@@ -858,7 +842,7 @@ slotHandle = "VH1" ‖ CBOR([resetEpoch, slot, owner]) ‖ tag
 tag        = first 16 bytes of HMAC-SHA-256(handleKey, "VCAP-HANDLE\0" ‖ CBOR([resetEpoch, slot, owner]))
 ```
 
-`handleKey` is a 32-byte secret generated inside the authenticator at Personalize and destroyed by Reset. A handle is valid when its tag verifies, its resetEpoch is the current one, and its owner equals the slot's stored owner. An invalid handle is treated as an unknown credential (`NO_CREDENTIALS`).
+`handleKey` is a 32-byte secret generated inside the authenticator at Personalize and deleted by Reset. A handle is valid when its tag verifies, its resetEpoch is the current one, and its owner equals the slot's stored owner. An invalid handle is treated as an unknown credential (`NO_CREDENTIALS`).
 
 #### 7.14.4 CreateIdentity through authenticatorMakeCredential
 
@@ -1118,7 +1102,7 @@ The signature is a 64-byte Ed25519 signature over the message, verifiable under 
 | Sign ROT | The slot's keys (current←old.next, next←newNext), latest, signature counter and lastSigned; prepared deleted |
 | Sign EXN / RPY / GROUP_EXN | The slot's signature counter and lastSigned |
 | Sign GROUP / GROUP_SUPERSEDE | The slot's group record for `i` (created, reused per §8.4.4 item 6, or `t`, seq, said, prior, originalLength, originalDigest, original signature, actualPublic and signCounter replaced; `replaced` cleared for GROUP, set and supersedeCount incremented for GROUP_SUPERSEDE), signature counter and lastSigned, all in the slot's own persistent state |
-| Reset | Reset intent record → secret destruction and removal of business state → new reset epoch → reset intent record cleared (§7.12) |
+| Reset | Not one atomic commit: removal of business state and the new reset epoch, in separate writes; an interrupted Reset is repeated (§7.12.2) |
 | GetState, Recover | No business write |
 
 Rules:
@@ -1128,7 +1112,7 @@ Rules:
 3. After a ROT write, storage is in exactly one of two states: the pre-rotation keys, latest and prepared; or the post-rotation keys and latest (without prepared). Mixed intermediate states are impossible, and one rotation is applied at most once.
 4. After a write error or an error response, the platform determines the outcome per §12.3.
 5. Slot state stores latest's kind, seq, said, originalLength, originalDigest and original signature, and `lastSigned` (kind, signCounter, actualPublic, originalLength, originalDigest and signature of the most recent signature of any kind), for use by §7.8.
-6. ROT is not required to destroy pre-rotation private keys; until Reset, an attacker able to read the raw storage medium may recover historical keys. Only Reset guarantees that they are unrecoverable (§13.1).
+6. ROT is not required to destroy pre-rotation private keys; until Reset, an attacker able to read the raw storage medium may recover historical keys. Reset deletes them but does not erase the storage medium either (§13.2 item 10).
 
 ### 8.8 Zeroizing a Context
 
@@ -1335,7 +1319,7 @@ VCAP uses the [NFC binding of CTAP 2.3][ctap-nfc] unchanged, including the FIDO 
 - **Field session.** A field session begins when the authenticator is powered by the reader's field and ends when it leaves the field. The field session is one transport. `SELECT` of the FIDO AID and leaving the field both zeroize the context.
 - **Tap as UP.** Entering the field counts as one user action. The first UP-requiring request in the field session consumes it (§8.2 step 1); later UP-requiring requests in the same session wait for a sensor press. Reset never accepts the tap.
 - **Cancellation.** The platform cancels by ending the field session. A Cancel command (§7.3) between two commands remains available.
-- **Leaving the field during a command.** The command ends with power loss and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new field session; an interrupted Reset completes at the next power-up (§7.12.4).
+- **Leaving the field during a command.** The command ends with power loss and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new field session; an interrupted Reset is repeated in a new field session (§7.12.2).
 
 ### 11.4 USB CCID
 
@@ -1449,8 +1433,8 @@ The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step
 
 1. The enterprise decides on a Reset (departure, lost device, blocked PIN, etc.) and, on the enterprise side, deactivates the old CLIENT / WORK AIDs and stops issuing Tickets for the old reset epoch. Reset also erases the employee's FIDO credentials, so relying parties that registered them need re-registration.
 2. Reinsert (USB) or re-tap (NFC) the authenticator and send Reset within 10 s of power-up (§7.12.1 step 2); the user holds the touch for 5 seconds. No PIN is needed, so Reset also works after the PIN is blocked. Generic FIDO clients (browser or operating system settings) can also send Reset and prompt only for a touch; enterprise guidance SHOULD tell users that Reset requires a 5-second hold and erases all identities on the authenticator.
-3. On success the authenticator is in STOCK_UNBOUND with resetEpoch+1. IT enrolls it again per §12.5 steps 2–3: BindEnterprise, then Personalize with a TrustConfig for the reported resetEpoch. The attestation identity and its certificate are unchanged, so the enterprise can verify the BindingProof with the key it already registered. The employee then sets a PIN and onboards again. IT MUST take the reset epoch from a verified BindingProof, never from its own count of Resets.
-4. The authenticator SHOULD stay connected during Reset; if Reset is interrupted, the authenticator completes it at the next power-up.
+3. On success the authenticator is in STOCK_UNBOUND with a higher resetEpoch (normally resetEpoch+1; more if an earlier Reset was interrupted, §7.12.2). IT enrolls it again per §12.5 steps 2–3: BindEnterprise, then Personalize with a TrustConfig for the reported resetEpoch. The attestation identity and its certificate are unchanged, so the enterprise can verify the BindingProof with the key it already registered. The employee then sets a PIN and onboards again. IT MUST take the reset epoch from a verified BindingProof, never from its own count of Resets.
+4. The authenticator SHOULD stay connected during Reset. If Reset is interrupted, the platform reports it and the user repeats steps 2–3; the authenticator does not complete it on its own.
 
 A Reset ends the continuity of every AID on the authenticator in the same way as loss of the device; VAF §6.5 specifies the resulting enterprise and credential obligations.
 
@@ -1537,7 +1521,7 @@ These procedures apply to an authenticator that implements group member signing.
 | Fork within a slot | Events advance strictly by seq / prior, are written before being returned, and latest can only be retrieved as its original signature | Assumes no full rollback of non-volatile storage |
 | Member duplicity in a group AID | With group member signing, a slot signs only at increasing seq of a group AID and at most one event per (group AID, seq), except at most one GROUP_SUPERSEDE per seq, extending the same prior event, under a separately authorized capability, shown and counted in the group record | A group fork needs signatures meeting the threshold; members on other authenticators, or other devices, are outside this guarantee. Membership, thresholds and prior commitments are checked by the enterprise (§12.8 item 7). Assumes no full rollback of non-volatile storage |
 | Duplicate signature after a lost response | Signature counter makes each Ticket single-use; Recover returns the latest, the most recent and each group record's signature | Older non-KEL signatures only from the enterprise archive |
-| Lost device / employee departure | Reset makes the PIN record and all private keys unrecoverable; the enterprise deactivates old AIDs | Network deactivation, secret destruction and external copies are separate matters; historical keys may persist after ROT until Reset |
+| Lost device / employee departure | Reset deletes the PIN record and all private keys, so no interface of the authenticator can use them again; the enterprise deactivates old AIDs | Network deactivation and external copies are separate matters; deleted keys may remain on the storage medium (§13.2 item 10) |
 
 ### 13.2 Remaining Risks
 
@@ -1550,10 +1534,11 @@ These procedures apply to an authenticator that implements group member signing.
 7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility. Enterprises SHOULD tell users what Reset erases (§12.7 step 2). Such a Reset also removes the enterprise binding: afterwards any party can bind the authenticator to its own enterprise, as with a factory-new one, so the binding does not prevent reuse of a lost or stolen authenticator. It leaves no enterprise record; the enterprise detects it from the next BindingProof (§7.4.3, §12.7).
 8. **Group records:** group records are released only by Reset, or for an abandoned inception by reuse under GROUP_SUPERSEDE (§8.4.4 item 6), so a slot takes part in at most `GROUP_RECORDS` group AIDs at a time; enterprises SHOULD approve a member signature on a group `icp` only after all members have agreed on its bytes. Because a slot signs only at increasing sequence numbers of a group, one signature on an event far ahead of the group's accepted state, approved in error or by a compromised role key, keeps the slot from signing the group's lower sequence numbers until Reset; §12.8 item 7.2 therefore approves only `s` = accepted sequence + 1. Each record needs a Ticket, so only the enterprise can consume them. GROUP_SUPERSEDE lets a member sign a second event, and never a third, at a sequence number it has already signed; an attacker who holds a role key with bit 15, a PIN token and a user touch can thereby add this member's signature to a competing event. The enterprise confines bit 15 to a separately controlled role key (§12.8 item 7.5) and audits `supersedeCount`.
 9. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch, and the attestation certificate chain, which also names the manufacturer and anything the manufacturer puts in the certificates. Manufacturers SHOULD NOT place per-customer data in attestation certificates. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands. After a Reset the device is in STOCK_UNBOUND and discloses only the device identifier and the certificate chain.
+10. **Residual data after Reset:** Reset deletes secrets logically and does not overwrite or erase the storage medium (§7.12.3), and ROT does not destroy pre-rotation keys (§8.7 rule 6). An attacker able to read the raw non-volatile storage of the authenticator, outside its interfaces, may therefore recover private keys and the PIN check value of earlier reset epochs. VCAP relies on the authenticator's secure storage for this. Keys recovered this way still need a Ticket to be used through an authenticator, but can sign outside one, so an enterprise MUST deactivate the AIDs of a lost or reset authenticator (§12.7 step 1) and not rely on Reset alone.
 
 ### 13.3 PIN
 
-- The PIN is transmitted only encrypted under pinUvAuthProtocol 2; the authenticator stores only a 16-byte check value and the remaining attempt count (persistent across power loss), and stores neither the PIN nor the token.
+- The PIN is transmitted only encrypted under PIN/UV Auth Protocol Two, or under Protocol One by a standard CTAP client that uses it (§7.2). Protocol One uses a zero IV and a 16-byte MAC; it never grants a VCAP permission, and VCAP platforms MUST use Protocol Two; the authenticator stores only a 16-byte check value and the remaining attempt count (persistent across power loss), and stores neither the PIN nor the token.
 - An attempt is decremented before comparison and the counter is restored on success; power loss does not refund an attempt.
 
 ### 13.4 Random Numbers
@@ -1620,7 +1605,7 @@ All valid bits: `0x1F03` (7 capabilities), or `0x1DF03` (10 capabilities) on an 
 ### C.1 Normative References
 
 - [BCP14] RFC 2119 and RFC 8174, Key words for use in RFCs to Indicate Requirement Levels — <https://www.rfc-editor.org/info/bcp14>
-- [CTAP] FIDO Alliance, [Client to Authenticator Protocol (CTAP) 2.3][ctap]: command codes, authenticatorGetInfo, authenticatorClientPIN, PIN/UV Auth Protocol Two, authenticatorReset, status codes, CTAPHID and NFC bindings
+- [CTAP] FIDO Alliance, [Client to Authenticator Protocol (CTAP) 2.3][ctap]: command codes, authenticatorGetInfo, authenticatorClientPIN, PIN/UV Auth Protocols One and Two, authenticatorReset, status codes, CTAPHID and NFC bindings
 - [RFC8949] Concise Binary Object Representation (CBOR), §4.2 Deterministically Encoded CBOR — <https://www.rfc-editor.org/rfc/rfc8949>
 - [RFC9052] CBOR Object Signing and Encryption (COSE): Structures and Process — <https://www.rfc-editor.org/rfc/rfc9052>
 - [RFC9053] COSE Initial Algorithms — <https://www.rfc-editor.org/rfc/rfc9053>
@@ -1644,6 +1629,7 @@ All valid bits: `0x1F03` (7 capabilities), or `0x1DF03` (10 capabilities) on an 
 [ctap-commands]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html
 [ctap-getinfo]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#authenticatorGetInfo
 [ctap-clientpin]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#authenticatorClientPIN
+[ctap-pinproto1]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#pinProto1
 [ctap-pinproto2]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#pinProto2
 [ctap-reset]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#authenticatorReset
 [ctap-mc]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html#authenticatorMakeCredential
