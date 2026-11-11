@@ -1,10 +1,10 @@
 # vLEI Client to Authenticator Protocol (VCAP) 1.0
 
-*Editor's Draft — 10 November 2026*
+*Candidate Specification — 11 November 2026*
 
 **Specification identifier:** VCAP-1.0  
-**Editor's Draft URL:** https://vlei-auth.github.io/vcap/  
-**Status:** Editor's Draft  
+**URL:** https://vlei-auth.github.io/vcap/  
+**Status:** Candidate Specification  
 **Editors:**
   * Fan Dang (ACentauri Technology Limited)
 
@@ -15,6 +15,20 @@
 **Abstract:** This document defines the protocol between a hardware authenticator for KERI keys and a platform: the transport, the command set, the processing steps the authenticator performs for each command, data structures and status codes, and the procedures that wallets and enterprises follow when using the authenticator.
 
 ---
+
+## Status of this document
+
+This is a **Candidate Specification** of VCAP 1.0, dated 11 November 2026. Its features are frozen: until it becomes final it changes only to correct errors, remove ambiguity, or resolve findings of the review below, and every such change is listed in the change log. It becomes the final 1.0 when (1) at least one Enterprise Service and one Platform, written independently of each other's code, pass the VAF conformance tests including VAF BASE-T15–T20 on real authenticators; (2) an implementation written only from these documents reproduces the test vectors of VCAP Appendix E and completes a signature and its archiving; and (3) an independent security review of VCAP, VCAP-EI and VAF has been completed and its findings resolved. Comments and errata are submitted as issues at <https://github.com/vlei-auth/vcap/issues>.
+
+## License and Intellectual Property
+
+Copyright © 2026 ACentauri Technology Limited and the contributors.
+
+This document is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0), <https://creativecommons.org/licenses/by/4.0/>. Code and data published with it, including test vectors and the scripts that generate them, are licensed under the Apache License, Version 2.0, <https://www.apache.org/licenses/LICENSE-2.0>.
+
+As of the date of this document, the editors are not aware of any patent or patent application whose claims would necessarily be infringed by implementing it. Anyone who is aware of such a patent or application is requested to disclose it through the issue tracker above. The licensing terms for any such claims are stated before 1.0 is final.
+
+Names of other specifications and organizations, including FIDO, CTAP, KERI, ACDC, vLEI and GLEIF, are used only to identify the specifications this document relies on. They do not imply endorsement, and implementing this document does not by itself entitle a product to any certification or trademark of those organizations.
 
 ## Contents
 
@@ -36,6 +50,7 @@
 - Appendix C References
 - Appendix D Attestation Certificate Chain and Enrollment Records
 - Appendix E Test Vectors
+- Appendix F Change Control
 
 ---
 
@@ -60,7 +75,7 @@ This document specifies the authenticator state model, the parameters and proces
 
 This document defines the interface between the authenticator and the platform, and the format of enterprise-signed objects consumed by the authenticator. The internal protocols of enterprise gateways, KERIA, witnesses and wallets are out of scope; Section 12 states only their requirements for using authenticator output. The interface between platforms and the enterprise service (Ticket requests, archiving and recovery) is specified by the companion [VCAP Enterprise Interface 1.0](https://vlei-auth.github.io/vcap-ei/).
 
-The VCAP operations are reachable as native CTAP vendor commands (§7.4–§7.12) over the transports of Section 11. An authenticator MAY in addition implement the WebAuthn route (§7.14), through which a web page invokes the same operations with standard WebAuthn calls; both routes apply the same checks and commit the same state.
+The VCAP operations are reachable as native CTAP vendor commands (§7.4–§7.12) over the transports of Section 11. VCAP 1.0 defines no other route: a web page reaches the VCAP operations only through a platform client that uses these commands.
 
 ---
 
@@ -72,10 +87,9 @@ The key words "**MUST**", "**MUST NOT**", "**REQUIRED**", "**SHOULD**", "**SHOUL
 
 | Class | Implements | Sections that apply |
 |---|---|---|
-| **Authenticator** | Firmware and hardware of the authenticator | §§ 5–11, Appendices A and B; §7.14 when the WebAuthn route is implemented |
+| **Authenticator** | Firmware and hardware of the authenticator | §§ 5–11, Appendices A and B |
 | **Platform** | Software that sends VCAP commands: wallets, IT tools, manufacturing tools | §§ 6, 9, 10, 11 (as sender) and 12.1–12.7; 12.10 when it uses group member signing |
-| **Web platform** | An enterprise web page using the WebAuthn route | §§ 7.14, 12.9 |
-| **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7–12.9, Appendix D; 12.10 when it issues group Tickets |
+| **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7, 12.8, Appendix D; 12.10 when it issues group Tickets |
 | **Manufacturer** | Producer of the attestation identity | Appendix D.1, D.5; D.3 when it delivers enrollment packages |
 
 An Authenticator implements at least one transport of Section 11 and declares in GetInfo `transports` exactly the transports it implements (§7.1). The following features are optional; an Authenticator that implements one implements all of its requirements:
@@ -85,8 +99,7 @@ An Authenticator implements at least one transport of Section 11 and declares in
 | USB HID transport | §11.2 |
 | NFC transport | §11.3 |
 | USB CCID transport | §11.4 |
-| WebAuthn route (provisional: its encoding may change in a later version of this document) | §7.14 |
-| Group member signing (kinds 7, 8 and 9) | §§ 5.2, 7.4.2, 7.7, 7.8, 7.14.5 (key 7), 8.4.4, 8.5.4, 8.7, 9.3, 9.4, 12.8 item 7, 12.10, 13.2 item 8, Appendix B |
+| Group member signing (kinds 7, 8 and 9) | §§ 5.2, 7.4.2, 7.7, 7.8, 8.4.4, 8.5.4, 8.7, 9.3, 9.4, 12.8 item 7, 12.10, 13.2 item 8, Appendix B |
 
 ### 2.2 Normative Statements
 
@@ -143,7 +156,6 @@ Command names, subcommand names, field names, data structure names, status codes
 | power-cycle lockout | After a threshold of consecutive PIN failures, further verification requires a power cycle |
 | PIN retry counter | The durably stored number of remaining PIN attempts |
 | signature counter (`signCounter`) | A persistent per-slot counter advanced by every signature; each Ticket names the value its signature will receive (§5.2) |
-| slot handle | The credential ID that names a slot on the WebAuthn route (§7.14.3) |
 | field session | The period an NFC authenticator is powered by one reader field (§11.3) |
 | card session | The period from a CCID ICC power-on to the matching power-off (§11.4) |
 | Outbox | Platform storage in which a message is durably saved before it is signed |
@@ -333,7 +345,7 @@ Reset defines no intermediate state, and the authenticator keeps no record of a 
 
 ### 6.1 Deterministic CBOR
 
-All CBOR of VCAP commands (§7.2–§7.12) and of VCAP data structures MUST satisfy the rules below. Standard CTAP operations (§7.13), including VCAP-wrapped requests (§7.14), and the CTAP parameters of ClientPIN follow the CTAP CBOR encoding rules instead, so that generic clients interoperate; the VCAP payloads they carry (`user.id`, VCAPREQ) follow the rules below.
+All CBOR of VCAP commands (§7.2–§7.12) and of VCAP data structures MUST satisfy the rules below. Standard CTAP operations (§7.13) and the CTAP parameters of ClientPIN follow the CTAP CBOR encoding rules instead, so that generic clients interoperate.
 
 1. Integers and lengths use the shortest definite-length encoding; indefinite-length encoding MUST NOT be used.
 2. A tstr MUST be valid UTF-8.
@@ -397,8 +409,6 @@ Each signed object uses a unique domain separation tag. Verifiers MUST use the p
 | `"VCAP-TRUST\0"` | Enterprise root key | TrustConfig `body` bytes | §9.1 |
 | `"VCAP-SIGN\0"` | TrustConfig role key | Ticket `body` bytes | §9.2 |
 | `"VCAP-CMD\0"` | HMAC(token) | Command authentication message | §8.1 |
-| `"VCAP-WEBAUTHN\0"` | Attestation key | WebAuthn-wrapped result | §7.14.5 |
-| `"VCAP-HANDLE\0"` | HMAC(handleKey) | Slot handle | §7.14.3 |
 | (no prefix) | Slot key | KERI message | §8.4, §8.5 |
 
 ---
@@ -411,8 +421,8 @@ Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and ar
 
 | Code | Command | Business parameters (excluding pinUvAuthProtocol / pinUvAuthParam) | Token permission | UP | Result | Context closed on success |
 |---|---|---|---|---|---|---|
-| 0x01 | authenticatorMakeCredential | As CTAP (§7.13); VCAP-wrapped CreateIdentity (§7.14) | CTAP `mc` | **Yes** | As CTAP | No |
-| 0x02 | authenticatorGetAssertion | As CTAP (§7.13); VCAP-wrapped operations (§7.14) | CTAP `ga` | **Yes** | As CTAP | No |
+| 0x01 | authenticatorMakeCredential | As CTAP (§7.13) | CTAP `mc` | **Yes** | As CTAP | No |
+| 0x02 | authenticatorGetAssertion | As CTAP (§7.13) | CTAP `ga` | **Yes** | As CTAP | No |
 | 0x04 | GetInfo | none | None (public) | No | authenticatorGetInfo map (§7.1) | No |
 | 0x06 | ClientPIN | See §7.2 | None (self-authenticating) | No | See §7.2 | No |
 | 0x07 | Reset | none | None; within 10 s of power-up | **Yes (5 s hold)** | Empty | Yes |
@@ -430,7 +440,7 @@ Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and ar
 | 0x71 | UploadChunk | `{1:offset,2:bytes_bstr}` | SIGN | No | Empty | No |
 | 0x72 | UploadEnd | `{}` | SIGN | **Yes** | Signed | No |
 
-GetInfo and Reset carry no parameter map, as in CTAP. The VCAP-wrapped forms of 0x01 and 0x02 exist only on an authenticator that implements the WebAuthn route (§7.14).
+GetInfo and Reset carry no parameter map, as in CTAP.
 
 Commands that require a token permission append two keys after the business parameters: `254` = **pinUvAuthProtocol** (fixed at 2) and `255` = **pinUvAuthParam** (32 bytes, §8.1). Parameters below are written as `254:2, 255:pinUvAuthParam_b32`.
 
@@ -446,7 +456,7 @@ For each completely reassembled request, the authenticator performs the followin
 4. Decode `command_u8`; an unknown command returns `INVALID_COMMAND`. Decode the parameters per §6.1.
 5. If the command is `GetInfo`, execute §7.1. If the command is status-mode `GetState`, execute §7.4.1. If the command is binding-mode `GetState` (GetState whose parameter map is exactly `{2:challenge_b32}` or `{2:challenge_b32, 3:1}`), execute §7.4.3. If the command is `Cancel`, execute §7.3.
 6. If the authenticator is in `RECOVERY_REQUIRED` and the command is not Reset, return `RECOVERY_REQUIRED`.
-7. If the command is `ClientPIN`, execute §7.2. If the command is a standard CTAP operation, execute it per §7.14 when the request is VCAP-wrapped (§7.14.1), and otherwise as §7.13 specifies.
+7. If the command is `ClientPIN`, execute §7.2. If the command is a standard CTAP operation, execute it as §7.13 specifies.
 8. If the command requires a token permission, determine the required permission from the command table in §7.0 and execute §8.1. Otherwise (except Reset) a context is required; if absent, return `PUAT_REQUIRED`.
 9. Execute the command.
 10. After the command succeeds, confirm again that the deadlines and permissions are still valid (§8.1 steps 4 and 7); otherwise return the corresponding error.
@@ -463,9 +473,9 @@ GetInfo is [CTAP authenticatorGetInfo][ctap-getinfo]. The request and the encodi
 | 0x04 | options | `clientPin` as CTAP; `pinUvAuthToken`: true; `noMcGaPermissionsWithClientPin` absent, so browsers obtain `mc` / `ga` tokens with the PIN; `vcapGroup`: true exactly when group member signing (§8.4.4) is implemented, and absent otherwise |
 | 0x05 | maxMsgSize | 2048 |
 | 0x06 | pinUvAuthProtocols | `[2, 1]` when Protocol One is offered (§7.2), otherwise `[2]`; Protocol Two is always listed first |
-| 0x08 | maxCredentialIdLength | At least 1023 (the largest VCAPREQ, §7.14.5) when the WebAuthn route is implemented; otherwise as the product supports |
+| 0x08 | maxCredentialIdLength | As the product supports |
 | 0x09 | transports | Exactly the transports implemented: `"usb"` (CTAPHID, §11.2), `"nfc"` (§11.3), `"smart-card"` (CCID, §11.4) |
-| 0x0A | algorithms | ES256 (-7) and EdDSA (-8) for standard operations; in addition `VCAP_ALG` (-65700) when the WebAuthn route is implemented (§7.14) |
+| 0x0A | algorithms | ES256 (-7) and EdDSA (-8) for standard operations |
 | 0x0C | forcePINChange | Set by Personalize when the PIN is shorter than TrustConfig `minPinChars` (§7.11) |
 | 0x0D | minPINLength | TrustConfig `minPinChars`; 4 before personalization |
 | 0x18 | longTouchForReset | true: Reset requires a 5-second hold (§7.12) |
@@ -480,10 +490,10 @@ VCAP adds the following rules:
 
 1. **Context.** getKeyAgreement establishes the context of the transport that carries it (§5.3): it zeroizes any existing context of that transport, generates a new P-256 key agreement key pair, and derives `contextId` from it (§6.3). A PIN mismatch zeroizes the context, so the platform calls getKeyAgreement again.
 2. **PIN policy.** The minimum PIN length is TrustConfig `minPinChars`, or 4 before personalization, counted in Unicode code points. Personalize sets forcePINChange when an existing PIN is shorter (§7.11); while it is set, getPinToken and getPinUvAuthTokenUsingPinWithPermissions return `PIN_POLICY_VIOLATION` and changePIN clears it.
-3. **Permissions.** Besides the CTAP permissions, a token can carry the VCAP permissions `READ` (0x0100), `SIGN` (0x0200) and `MANAGE` (0x0400) (§7.0). VCAP permissions are not bound to an RP ID. Permissions are not accumulated: a new token replaces the previous one with exactly the requested permissions. A token from getPinToken carries only the CTAP permissions `mc` and `ga`, as CTAP defines for it, and never a VCAP permission, so it serves generic clients (§7.13, §7.14) but not VCAP commands, which require getPinUvAuthTokenUsingPinWithPermissions.
+3. **Permissions.** Besides the CTAP permissions, a token can carry the VCAP permissions `READ` (0x0100), `SIGN` (0x0200) and `MANAGE` (0x0400) (§7.0). VCAP permissions are not bound to an RP ID. Permissions are not accumulated: a new token replaces the previous one with exactly the requested permissions. A token from getPinToken carries only the CTAP permissions `mc` and `ga`, as CTAP defines for it, and never a VCAP permission, so it serves generic clients (§7.13) but not VCAP commands, which require getPinUvAuthTokenUsingPinWithPermissions.
 4. **Token lifetime.** The token's lifetime follows §5.3 (an initial usage time limit of 19 800 ms on every transport, then valid until the context ends). The token carries no user-presence state, so every UP-requiring command collects a new UP (§8.2).
 5. **Lifecycle.** A successful setPIN in a personalized authenticator moves the lifecycle to PIN_READY (§5.1). In RECOVERY_REQUIRED every subcommand returns `RECOVERY_REQUIRED`.
-6. **Protocol One.** Protocol One exists only so that standard CTAP clients that do not use Protocol Two can set and change the PIN and obtain `mc` / `ga` / `cm` tokens. getPinUvAuthTokenUsingPinWithPermissions under Protocol One that requests READ, SIGN or MANAGE returns `UNAUTHORIZED_PERMISSION`. A token issued under Protocol One authenticates only standard CTAP operations, including VCAP-wrapped requests (§7.14), with pinUvAuthParam verified as CTAP defines for that protocol; VCAP commands accept only Protocol Two (§8.1 step 2).
+6. **Protocol One.** Protocol One exists only so that standard CTAP clients that do not use Protocol Two can set and change the PIN and obtain `mc` / `ga` / `cm` tokens. getPinUvAuthTokenUsingPinWithPermissions under Protocol One that requests READ, SIGN or MANAGE returns `UNAUTHORIZED_PERMISSION`. A token issued under Protocol One authenticates only standard CTAP operations, with pinUvAuthParam verified as CTAP defines for that protocol; VCAP commands accept only Protocol Two (§8.1 step 2).
 
 ### 7.3 Cancel (0x57)
 
@@ -743,7 +753,7 @@ The authenticator performs the following steps:
 1. Require a current context, otherwise `PUAT_REQUIRED`.
 2. If the lifecycle is not ENTERPRISE_BOUND, return `INVALID_STATE`.
 3. Decode the envelope per §9.1; verify `"VCAP-TRUST\0" ‖ body` with the enterpriseRoot in the binding record; on failure return `CONFIG_INVALID`.
-4. Validate body: version 2; device, tenant and resetEpoch match this device; ownerMask, minPinChars, roles and webauthnRpIds valid per §9.1 (keyIds in increasing byte order, public keys distinct from each other and from the enterprise root key and attestation key, safe public keys, capability bits only in the valid combinations of Appendix B). A device, tenant or resetEpoch mismatch returns `CONFIG_MISMATCH`; any other violation returns `INVALID_PARAMETER`. Because step 3 has already verified the enterprise root signature, `CONFIG_MISMATCH` discloses nothing to a party that cannot sign TrustConfigs.
+4. Validate body: version 2; device, tenant and resetEpoch match this device; ownerMask, minPinChars and roles valid per §9.1, and the reserved field empty (keyIds in increasing byte order, public keys distinct from each other and from the enterprise root key and attestation key, safe public keys, capability bits only in the valid combinations of Appendix B). A device, tenant or resetEpoch mismatch returns `CONFIG_MISMATCH`; any other violation returns `INVALID_PARAMETER`. Because step 3 has already verified the enterprise root signature, `CONFIG_MISMATCH` discloses nothing to a party that cannot sign TrustConfigs.
 5. Pre-check persistent storage space; if insufficient, return `NO_SPACE`.
 6. Collect one UP per §8.2.
 7. Confirm that the context is still valid and the transport is still connected.
@@ -767,7 +777,7 @@ Reset has the code, power-up window and UP requirement of [CTAP authenticatorRes
 3. Reset is available in every lifecycle state. If the attestation identity or `resetEpoch` cannot be read and verified, return `RECOVERY_REQUIRED`: Reset cannot keep data it cannot read. An unreadable binding record, TrustConfig or slot state does not prevent Reset.
 4. Collect one UP per §8.2 with **hold = 5000 ms**; on timeout return `USER_ACTION_TIMEOUT`.
 5. Confirm that the transport is still connected (else `OPERATION_DENIED`).
-6. Delete the PIN record, all state and private keys of the four slots (including pre-rotation historical keys and group records), `handleKey` (§7.14.3), all FIDO credentials (§7.13), TrustConfig and the binding record (tenant, enterpriseRoot, personalized). In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
+6. Delete the PIN record, all state and private keys of the four slots (including pre-rotation historical keys and group records), all FIDO credentials (§7.13), TrustConfig and the binding record (tenant, enterpriseRoot, personalized). In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
 7. Increase `resetEpoch` by 1 and commit it.
 8. Zeroize any existing context and return empty success.
 
@@ -786,7 +796,7 @@ Steps 6 and 7 MAY be performed in either order, and step 6 MAY consist of severa
 - Every successful Reset, including one from RECOVERY_REQUIRED, leaves the authenticator in STOCK_UNBOUND with a higher `resetEpoch`; unreadable data is deleted rather than retained.
 - Reset keeps the attestation identity and `resetEpoch`. Step 6 applies to business secrets only.
 - Deletion is logical: Reset is not required to overwrite or erase the storage medium (§13.2 item 10).
-- `resetEpoch` never decreases. A later BindEnterprise, to the same or another enterprise, keeps it, so values signed for an earlier epoch (TrustConfig, KeyRef, slot handles) are never valid again on the same device.
+- `resetEpoch` never decreases. A later BindEnterprise, to the same or another enterprise, keeps it, so values signed for an earlier epoch (TrustConfig, KeyRef) are never valid again on the same device.
 - To use the authenticator again, the enterprise performs BindEnterprise and Personalize (§12.7).
 
 ### 7.13 Standard CTAP Operations
@@ -795,119 +805,14 @@ The authenticator is also a FIDO2 authenticator. It implements [authenticatorMak
 
 These operations follow CTAP, with the following VCAP rules:
 
-1. **Separate key material.** FIDO credentials are generated and stored separately from the four KERI slots. A FIDO credential key MUST NOT sign through a VCAP operation. A slot key MUST sign only KERI messages through the VCAP operations (§7.7, §7.14), and MUST NOT sign authenticator data or client data.
+1. **Separate key material.** FIDO credentials are generated and stored separately from the four KERI slots. A FIDO credential key MUST NOT sign through a VCAP operation. A slot key MUST sign only KERI messages through the VCAP operations (§7.7), and MUST NOT sign authenticator data or client data.
 2. **Lifecycle.** Standard operations are available in every lifecycle state, independent of enterprise binding and personalization. In RECOVERY_REQUIRED they return `RECOVERY_REQUIRED` (§5.1).
 3. **PIN and tokens.** The employee's single PIN serves both. A token obtained for CTAP permissions (`mc`, `ga`, …) authenticates CTAP operations as CTAP defines; a context whose token carries only CTAP permissions is never held (§5.3).
 4. **User presence.** UP is collected per §8.2, so an NFC tap counts as one UP and a sensor press is required otherwise.
 5. **Attestation.** Attestation for FIDO credentials MUST NOT use the VCAP attestation key, which identifies a single device. It uses batch attestation shared by a large population of devices, or self attestation.
 6. **Reset.** Reset (§7.12) erases all FIDO credentials together with the KERI slots.
-7. **Credential IDs.** Credential IDs of FIDO credentials MUST NOT begin with `"VH1"` or `"VQ1"`, the prefixes of slot handles and VCAP requests (§7.14).
+7. **No VCAP function.** A standard operation MUST NOT perform a VCAP operation, use a slot key or change slot state, whatever its parameters. The VCAP operations are reachable only through the commands of §7.2–§7.12.
 8. **Signature counters.** FIDO credentials use their own signature counter. A standard operation never changes a slot's `signCounter` (§5.2) or any other slot state, so WebAuthn sign-in does not affect the counters on which Tickets are based.
-
-### 7.14 VCAP Operations over WebAuthn
-
-This section defines an optional feature (§2.1). An authenticator MAY implement it; one that does not lists no `VCAP_ALG` in GetInfo and processes every authenticatorMakeCredential and authenticatorGetAssertion per §7.13. It depends on browsers and platforms forwarding the private algorithm identifier, long credential IDs and an opaque signature unchanged (§13.2 item 6).
-
-A web page can invoke CreateIdentity, Sign, proof-mode GetState, PrepareRotation and Recover through the standard WebAuthn API, with no software on the platform other than the browser. The browser carries the request to the authenticator as an ordinary authenticatorMakeCredential or authenticatorGetAssertion. The authenticator recognizes a VCAP request by a private COSE algorithm identifier and by payloads placed in fields that clients forward unchanged, and returns the result in fields that clients return to the page unchanged.
-
-Each wrapped operation applies the same checks and commits the same state as its native command. Only the authorization and the encoding differ.
-
-#### 7.14.1 Recognizing a Wrapped Request
-
-`VCAP_ALG = -65700` is a COSE algorithm identifier in the private-use range (below -65536). It is listed in GetInfo `algorithms` (§7.1).
-
-A request is **VCAP-wrapped** when all of the following hold, and is otherwise processed as a standard operation per §7.13:
-
-- The authenticator is personalized, and `SHA-256(rpId)` is listed in TrustConfig `webauthnRpIds` (§9.1).
-- For authenticatorMakeCredential: `VCAP_ALG` is the first entry of `pubKeyCredParams` that the authenticator supports, and `user.id` begins with the ASCII bytes `"VC1"`.
-- For authenticatorGetAssertion: `allowList` has exactly one entry, and its `id` begins with the ASCII bytes `"VQ1"`.
-
-For an RP ID outside `webauthnRpIds`, the authenticator treats `VCAP_ALG` as unsupported and a `"VQ1"` ID as an unknown credential, exactly as a security key without VCAP would. Pages on other RP IDs therefore cannot detect or use the VCAP function.
-
-#### 7.14.2 Authorization and User Presence
-
-- A wrapped request **MUST** carry `pinUvAuthParam`, verified as CTAP specifies for the command, with a token holding the CTAP permission `mc` (for authenticatorMakeCredential) or `ga` (for authenticatorGetAssertion) and, where the token is bound to an RP ID, bound to this rpId. Otherwise the authenticator returns `PUAT_REQUIRED` or the corresponding CTAP error. The context and token deadlines of §8.1 step 4 apply.
-- These CTAP permissions take the place of READ, SIGN and MANAGE on this route; the operation is limited to the slot named by the request.
-- A wrapped request with a zero-length `pinUvAuthParam` (the probe some clients send to select an authenticator before collecting the PIN) returns `PIN_AUTH_INVALID` **immediately and without collecting UP**, after the checks of §7.14.1 and the lifecycle check below; it creates no context and changes no state. Clients treat this answer as the selection of the authenticator and go on to collect the PIN. This deliberately departs from the CTAP rule that the authenticator first waits for user presence: a wrapped request names an enrolled RP ID and a VCAP slot or algorithm, so only this authenticator can serve it, and the one UP of the operation is collected after the PIN authorization. The probe reveals nothing beyond the silent preflight of §7.14.5 step 2. Requests that are not VCAP-wrapped, and authenticatorSelection, follow CTAP unchanged.
-- Every other wrapped request with `up` true collects one new UP per §8.2, regardless of any user-presence state carried by the token. Read-only operations (GetState, Recover) also collect UP on this route, because the client requires it.
-- The lifecycle MUST be PIN_READY; otherwise the authenticator returns `INVALID_STATE`, or `RECOVERY_REQUIRED` in RECOVERY_REQUIRED (§5.1).
-- In a StateProof produced on this route, `authState.permissions` reports the VCAP permissions the operation stands in for: READ|MANAGE for CreateIdentity, READ for GetState, READ|SIGN for PrepareRotation.
-
-#### 7.14.3 Slot Handle
-
-A slot handle names one slot of the current reset epoch:
-
-```
-slotHandle = "VH1" ‖ CBOR([resetEpoch, slot, owner]) ‖ tag
-tag        = first 16 bytes of HMAC-SHA-256(handleKey, "VCAP-HANDLE\0" ‖ CBOR([resetEpoch, slot, owner]))
-```
-
-`handleKey` is a 32-byte secret generated inside the authenticator at Personalize and deleted by Reset. A handle is valid when its tag verifies, its resetEpoch is the current one, and its owner equals the slot's stored owner. An invalid handle is treated as an unknown credential (`NO_CREDENTIALS`).
-
-#### 7.14.4 CreateIdentity through authenticatorMakeCredential
-
-**Request fields:**
-
-| Field | Content |
-|---|---|
-| rp.id | An RP ID listed in `webauthnRpIds` |
-| user.id | `"VC1" ‖ CBOR({1:slot, 2:owner})` (≤ 64 bytes) |
-| clientDataHash | Used as the StateProof challenge |
-| pubKeyCredParams | `[{type:"public-key", alg:-65700}]` |
-| options | `rk` false or absent; an `rk` of true returns `UNSUPPORTED_OPTION` |
-| excludeList | Entries that are slot handles are ignored |
-
-The authenticator performs the following steps:
-
-1. Verify the authorization per §7.14.2 (`mc`).
-2. Execute §7.5 steps 2–7.
-3. Collect one UP per §8.2.
-4. Execute §7.5 step 8 (atomic commit); then generate a StateProof per §7.4.2 steps 3–7 with `challenge = clientDataHash`.
-5. Return the authenticatorMakeCredential response with `fmt = "none"`, an empty `attStmt`, and authData with flags UP, UV and AT set, signCount 0, and attested credential data:
-   - `credentialId` = the slot handle (§7.14.3);
-   - `credentialPublicKey` = `{1:1, 3:-65700, -1:6, -2:currentPublic_b32, -70000:StateProof_bstr}` (an OKP Ed25519 key carrying the StateProof under a private label).
-
-The enterprise verifies the clientDataJSON, the StateProof with the registered attestation key, and that the StateProof challenge equals `SHA-256(clientDataJSON)` (§12.9.1).
-
-#### 7.14.5 Operations through authenticatorGetAssertion
-
-**Request payload.** The single allowList entry carries the request:
-
-```
-VCAPREQ = "VQ1" ‖ CBOR(request)                    ; ≤ 1023 bytes
-request = {1:op, 2:slotHandle, ? 3:kind, ? 4:ticket_bstr, ? 5:original_bstr, ? 6:originalDigest_b32, ? 7:groupAid_t44}
-```
-
-| op | Operation | Further keys | Executes | Result |
-|---:|---|---|---|---|
-| 1 | Sign | 3, 4, 5 | §7.7 steps 2–20 | Signed |
-| 2 | GetState (proof mode) | ? 6, ? 7 | §7.4.2 steps 2–7, `challenge = clientDataHash`, with key 7 as the `groupAid` of §7.4.2; with key 6, also the selection of §7.8 step 4 | StateProof; with key 6, `[StateProof_bstr, Signed / null]` |
-| 3 | PrepareRotation | none | §7.6 steps 2–8, `challenge = clientDataHash` | StateProof |
-| 4 | Recover | 6 | §7.8 steps 2–6 | Signed |
-
-With key 6, op 2 resolves an unknown outcome in one call (§12.9.3). `Signed` is the record that §7.8 step 4 selects for `originalDigest`, encoded as in §7.8 step 6, or null when the slot is not ACTIVE or neither lastSigned, latest nor a group record of the slot matches. The operation remains read-only: it signs nothing and writes no state.
-
-The slot is the one named by `slotHandle`. The largest message on this route is therefore `1023 − 3 − len(CBOR(request))` with `original` counted as an empty bstr; with a typical Ticket of about 180 bytes this leaves roughly 780 bytes. A message that does not fit in VCAPREQ is signed through the native route with the upload commands (§7.7, §7.9).
-
-The authenticator performs the following steps:
-
-1. Decode VCAPREQ per §6.1 and verify the slot handle per §7.14.3. A malformed VCAPREQ or invalid handle is treated as an unknown credential (`NO_CREDENTIALS`).
-2. If `up` is false (a silent preflight by the client), return the response of step 5 with UP clear in the flags and a zero-length `signature`, without authorization, signing or any change of state.
-3. Verify the authorization per §7.14.2 (`ga`).
-4. Execute the operation as the table specifies. For op 1, step 16 of §7.7 collects the UP. For ops 2–4, the authenticator collects one UP per §8.2 after the checks of the underlying procedure and before any write or result.
-5. Return the authenticatorGetAssertion response:
-   - `credential` = `{type:"public-key", id:VCAPREQ}`;
-   - `authData` = `rpIdHash ‖ flags ‖ signCount`, with UP and UV set and `signCount` = the slot's signature counter after the operation (§5.2);
-   - `signature` = `CBOR([result_bstr, deviceSig_b64])`, where `result_bstr` is the CBOR encoding of the result and
-     `deviceSig = Ed25519(attestation key, "VCAP-WEBAUTHN\0" ‖ authData ‖ clientDataHash ‖ H(result_bstr))`;
-   - `user` and `numberOfCredentials` are omitted.
-
-`deviceSig` binds the result to this device, the RP ID and the page's clientData, which carries the enterprise challenge and the origin. The KERI signature is inside `result_bstr`; slot keys never sign `authData` or `clientDataHash`.
-
-Errors are the status codes of Section 10. Browsers report them to the page as a generic failure, so the page determines the outcome from the slot's signature counter (§12.9.3).
-
-
----
 
 ## 8. Common Authenticator Procedures
 
@@ -1137,9 +1042,9 @@ The leading integer of the TrustConfig body, the Ticket body and stateBody is a 
 envelope = [body_bstr, rootSignature_b64]                  ; ≤ 1536 bytes
            ; rootSignature = Ed25519(enterpriseRoot, "VCAP-TRUST\0" ‖ body)
 body     = [2, device_b32, tenant_b32, resetEpoch,
-            ownerMask, minPinChars, roles, webauthnRpIds]
+            ownerMask, minPinChars, roles, reserved]
 role     = [keyId_tstr, capabilityMask, public_b32]
-webauthnRpIds = [* rpIdHash_b32]
+reserved = []                                              ; the empty array
 ```
 
 | Field | Constraint |
@@ -1149,7 +1054,7 @@ webauthnRpIds = [* rpIdHash_b32]
 | roles | 1..8 entries; keyId is 1..16 bytes of UTF-8, in strictly increasing byte order |
 | role.public | Distinct from each other and from the enterprise root key and attestation key; safe public key (§3.1) |
 | capabilityMask | Unsigned integer 0..2^32−1, which implementations store in at least 32 bits (bit 16 lies above 16 bits); only the valid bits of Appendix B; non-zero |
-| webauthnRpIds | 0..4 entries; each is SHA-256 of an enterprise RP ID; strictly increasing byte order. The RP IDs from which VCAP-wrapped operations are accepted (§7.14.1); an empty list disables the WebAuthn route |
+| reserved | The empty array. Any other value is invalid. The position keeps the layout of TrustConfig version 2 |
 
 ### 9.2 Ticket
 
@@ -1168,7 +1073,7 @@ body   = [2, kind, signerKeyRef_b32, signCounter,
 | originalDigest | H(message) |
 | originalLength | 1..limit(kind) |
 
-The enterprise learns the slot's current signature counter from the last archived Signed (§9.4), from a StateProof (§9.3), or from the `signCount` of a WebAuthn response (§7.14). For several consecutive signatures on one slot it issues Tickets with consecutive counter values; each becomes usable once the previous one has been used.
+The enterprise learns the slot's current signature counter from the last archived Signed (§9.4), or from a StateProof (§9.3). For several consecutive signatures on one slot it issues Tickets with consecutive counter values; each becomes usable once the previous one has been used.
 
 ### 9.3 StateProof
 
@@ -1231,7 +1136,7 @@ binding      = [tenant_b32, enterpriseRootDigest_b32, resetEpoch, configurationD
 
 ### 10.1 Status Code Table
 
-Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0–0xF8. ClientPIN (§7.2) and the standard CTAP operations (§7.13) return status codes as CTAP defines them. The table lists the codes that VCAP commands and VCAP-wrapped operations (§7.14) return, with the platform action for each; VCAP commands MUST NOT return other codes. A platform receiving an unlisted code SHOULD report a protocol error and MUST NOT interpret it as a PIN error or as safe to retry. An error response is a single status byte with no map.
+Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0–0xF8. ClientPIN (§7.2) and the standard CTAP operations (§7.13) return status codes as CTAP defines them. The table lists the codes that VCAP commands return, with the platform action for each; VCAP commands MUST NOT return other codes. A platform receiving an unlisted code SHOULD report a protocol error and MUST NOT interpret it as a PIN error or as safe to retry. An error response is a single status byte with no map.
 
 | Code | Name | Meaning | Platform action |
 |---|---|---|---|
@@ -1243,9 +1148,7 @@ Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0�
 | 0x12 | INVALID_CBOR | Encoding, type, ordering, depth or trailing-byte violation | Fix the encoding |
 | 0x27 | OPERATION_DENIED | Owner or permission denied; disconnection during UP; transport replaced during execution | Report as distinct from a PIN error; obtain the user's consent again |
 | 0x28 | NO_SPACE | Insufficient persistent storage, or every group record of the slot is in use (§8.4.4 item 5) | For group records: reuse an abandoned inception record (§8.4.4 item 6) or Reset; otherwise maintenance |
-| 0x2b | UNSUPPORTED_OPTION | VCAP-wrapped MakeCredential with `rk` true (§7.14.4) | Fix the request |
 | 0x2d | KEEPALIVE_CANCEL | UP wait cancelled by `CTAPHID_CANCEL` | Do not re-sign automatically; reconcile per §12.3 if needed |
-| 0x2e | NO_CREDENTIALS | VCAP-wrapped request with an invalid slot handle or VCAPREQ (§7.14) | Obtain a current slot handle |
 | 0x2f | USER_ACTION_TIMEOUT | UP wait timed out after 30 s (PIN_TOKEN_EXPIRED if the context deadline comes first) | Do not re-sign automatically |
 | 0x30 | NOT_ALLOWED | Reset sent more than 10 s after power-up | Ask the user to reinsert or re-tap the authenticator and retry immediately |
 | 0x33 | PIN_AUTH_INVALID | Command authentication with the token failed (§8.1) | Call getKeyAgreement again and obtain a token |
@@ -1364,8 +1267,10 @@ After a PIN error (`PIN_INVALID`) the context has been zeroized; the platform MU
 4. If `1 + len(CBOR({1..4,254,255})) ≤ 2048` bytes, use Sign; otherwise use UploadBegin, UploadChunk…, UploadEnd in sequence.
 5. Prompt the user to touch once (over NFC, the tap counts as the touch).
 6. On receiving Signed, verify the signature independently with the expected public key, and check that originalDigest and originalLength match the Outbox; for a KEL signature also check the expected head.
-7. Archive to the enterprise; the UI shows "signed and archived".
-8. Network publication and witness acceptance complete in the background; the platform reports "committed locally", "archived by enterprise", "accepted by network" and "business authorized" as separate states.
+7. Archive to the enterprise; the UI shows "signed and archived". Archiving depends only on the verification of the result against the Ticket and the stored message, never on an approval or a time window (§12.8 item 8, VCAP-EI §10.4).
+8. Network publication, witness acceptance and delivery complete in the background; the platform reports "committed locally", "archived by enterprise", "held", "delivered", "accepted by network", "business authorized" and "terminated" as separate states.
+
+While a non-KEL signature of a slot is committed but not yet archived, the platform MUST NOT request another signature on that slot: `Recover` returns only the slot's most recent signature (§7.8), so a later signature would leave the Outbox as the only copy.
 
 Consecutive signatures reuse the valid token, the archived head and consecutive counter values. The authenticator checks the KEL seq / prior and the actual key itself: if the head the enterprise relied on is outdated, Sign returns `INVALID_KERI_EVENT` or `KEY_BINDING` and outputs no signature. That error zeroizes the context, so the platform obtains a new token with a new PIN entry; a platform in doubt about its local head SHOULD perform step 0 before requesting a Ticket. A Ticket rejected only because the counter moved (`TICKET_INVALID`) indicates that another signature happened in between; the platform reconciles per §12.3 before requesting a new Ticket.
 
@@ -1383,7 +1288,7 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 
 **CreateIdentity / PrepareRotation:** check the slot's phase and current / next / prepared keys with GetState; the authenticator generates each key set only once.
 
-**Non-KEL (EXN / RPY / GROUP_EXN):** GetState shows whether the counter reached the Ticket's `signCounter`. If it did and no later signature has occurred, Recover with `originalDigest` returns the signature from `lastSigned`. If a later signature has already replaced `lastSigned`, the signature can only come from the enterprise archive or the recipient; a lost response that was never archived cannot be recovered. If the counter did not advance, nothing was signed.
+**Non-KEL (EXN / RPY / GROUP_EXN):** GetState shows whether the counter reached the Ticket's `signCounter`. If it did and no later signature has occurred, Recover with `originalDigest` returns the signature from `lastSigned`. If a later signature has already replaced `lastSigned`, the signature can only come from the enterprise archive or the recipient; a lost response that was never archived cannot be recovered, and the platform and enterprise terminate the operation and reconcile the counter (VCAP-EI §10.6). If the counter did not advance, nothing was signed; the platform MAY sign again with the same Ticket and message after the user confirms, and MUST NOT do so automatically. This is a new signing operation started by the user, not a resend of the lost command.
 
 **Group signatures (GROUP / GROUP_SUPERSEDE):**
 
@@ -1416,7 +1321,7 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 | 9 | Employee | CreateIdentity(WORK) → Sign(ICP, WORK) | 1 |
 | 10 | Employee | Sign(RPY, WORK): Agent end-role | 1 |
 
-On the native route, steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature. On the WebAuthn route (§12.9) each of steps 5, 6, 8, 9 and 10 is one browser call, the two parts of step 9 being separate calls, with one PIN entry and one UP each.
+Steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature.
 
 The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys, and SHOULD NOT set the PIN: the device is handed to the employee in PERSONALIZED_NO_PIN, and step 4 takes place on the employee's platform. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before creating the agent, to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
 
@@ -1456,40 +1361,17 @@ The enterprise Ticket issuer MUST:
 6. When an event is permanently rejected by an authority, mark the slot as REJECTED on the enterprise side only with operational authorization: no further Tickets are issued for the slot in this reset epoch, nothing is rolled back, and no replacement event is signed; the slot can be used again only after Reset. On transient failures, redeliver the original signature.
 7. For GROUP and GROUP_SUPERSEDE (§8.4.4), for GROUP_EXN (§8.5.4) and RPY of a group AID, and for ROT of a slot that holds group records, additionally:
    1. use as state basis the group's network-accepted key state, together with the slot's group record from its archive or from a StateProof carrying that record (§7.4.2);
-   2. for `ixn` and `rot`, approve only an event with `s` = accepted sequence + 1 and `p` = the accepted latest SAID; for `icp`, only an event whose `k`, `n`, `kt`, `nt`, `b` and `bt` match the group parameters agreed by all members, as shown by the initiator's `/multisig/icp` `exn` and by the confirmation of each member the service serves; the witness policy for group AIDs is enterprise policy;
+   2. for `ixn` and `rot`, approve only an event with `s` = accepted sequence + 1 and `p` = the accepted latest SAID; for `icp`, only an event whose `k`, `n`, `kt`, `nt`, `b` and `bt` match the group parameters agreed by all members, as shown by the initiator's `/multisig/icp` `exn` and by the confirmation of each member the service serves; the witness policy for group AIDs is enterprise policy. As the one exception, under item 7.5(a) the service MAY approve for GROUP_SUPERSEDE the event the group's witnesses accepted at (group AID, `s`), byte for byte, when the slot's group record holds a different event at `s` (`R.seq = s` and `R.said` differs from the accepted event's SAID); it checks that event against its own predecessor and the establishment event preceding it in the accepted KEL rather than against the accepted head, and the accepted head is unchanged. Only a member whose record holds a different event at the accepted head's sequence number needs this signature before it can sign the next event (§12.10 item 8); a member without a record, or whose record is further behind, signs the next event under GROUP;
    3. approve, across all members it serves, at most one original per (group AID, `s`), with one exception: once it has recorded under item 7.5 that the approved original cannot reach its threshold, it MAY approve one replacement original for that (group AID, `s`), which then becomes the approved original for every member. A member whose group record holds the abandoned event signs the replacement under GROUP_SUPERSEDE; a member whose record does not, including when no member signed the abandoned event, signs it under GROUP;
    4. verify the SAID, that the slot's current key is a member key of the event (for `ixn`, of the `k` of the group's latest establishment event), that for `rot` the member's current key either satisfies its prior next-key commitment in that establishment event or, when no entry of that event's `n` commits to it, belongs to a joining member whose addition the event's other signers authorize under the prior next threshold, that every entry of `k` is a 44-byte `D` key and every entry of `n` a 44-byte `E` digest (for `ixn` in the latest establishment event, which the authenticator does not see), the thresholds and the witness policy;
-   5. record a determination that an approved original did not and cannot reach its signing threshold before it approves a replacement under item 7.3. The determination rests on one of: (a) a different event at the same (group AID, `s`) has been accepted by the group's witnesses, and the replacement is that event; (b) members whose combined weight leaves the remaining weight below the current threshold, or for `rot` the prior next threshold, have refused the original, as recorded by a signed `exn` or by the service for members it serves; or (c) an enterprise-defined time has passed without acceptance, in which case the original can still reach its threshold later and the service records that residual risk. It signs a GROUP_SUPERSEDE Ticket only for that replacement, or for a group `icp` that reuses the record of an inception it has determined abandoned in the same way (§8.4.4 item 6), and only with a role key whose capability includes bit 15 (Appendix B), which it SHOULD hold separately from the role keys for routine signing;
+   5. record a determination that an approved original did not and cannot reach its signing threshold before it approves a replacement under item 7.3. The determination rests on one of: (a) a different event at the same (group AID, `s`) has been accepted by the group's witnesses, and the replacement is that event; this determination MAY be recorded once the witnesses have accepted that event, including when `s` is at or below the accepted sequence number; (b) members whose combined weight leaves the remaining weight below the current threshold, or for `rot` the prior next threshold, have refused the original, as recorded by a signed `exn` or by the service for members it serves; or (c) an enterprise-defined time has passed without acceptance, in which case the original can still reach its threshold later and the service records that residual risk. It signs a GROUP_SUPERSEDE Ticket only for that replacement, or for a group `icp` that reuses the record of an inception it has determined abandoned in the same way (§8.4.4 item 6), and only with a role key whose capability includes bit 15 (Appendix B), which it SHOULD hold separately from the role keys for routine signing;
    6. for GROUP_EXN, approve only an `exn` whose `i` is a group AID of which the slot's current key is a member key in the group's accepted key state, with the route, recipients and embedded material its purpose allows; for a group `rpy` signed under kind 5, check the same for the group AID the reply names;
    7. before issuing a ROT Ticket (kind 3) for a slot that holds group records, check, for every group whose latest accepted establishment event lists the slot's current key in `k` or `commit(current)` in `n`, that this event's `n` contains `commit(next)` of the slot, the key the rotation makes current; otherwise refuse the Ticket until that group has rotated, because the slot would lose its share of the group's prior next threshold (§12.10 item 3).
+8. Archive every Signed that verifies against a Ticket it issued and the message it stored for that Ticket, whether or not the approval, the enterprise's Ticket window or the employee's authority is still current. A signature committed by the authenticator exists regardless; time windows and authority decide only whether a Ticket is issued and whether a signed message is sent (VCAP-EI §10.4, §10.5).
 
-### 12.9 Browser Procedures
+### 12.9 (Reserved)
 
-These procedures apply to authenticators that implement the WebAuthn route (§7.14) and use it from a page served on an RP ID listed in `webauthnRpIds`. The browser performs the PIN exchange and context handling of §12.1; the page handles no PIN or token. Browsers do not keep a token from one call to the next, so each `create()` or `get()` call takes one PIN entry and one UP (§7.14.2). The procedures below therefore use one call per operation: the enterprise issues Tickets from its archived state and asks for a wrapped GetState only when that state is in doubt.
-
-#### 12.9.1 Creating an Identity
-
-1. The enterprise generates a single-use challenge.
-2. The page calls `navigator.credentials.create()` with the fields of §7.14.4, `attestation: "none"` and `userVerification: "required"`. The user enters the PIN in the browser and touches once.
-3. The enterprise verifies the clientDataJSON (`type`, `origin`, `challenge`), extracts the StateProof from the credential public key, verifies it with the registered attestation key, and checks that its challenge equals `SHA-256(clientDataJSON)`.
-4. The enterprise records the credential ID as the slot handle together with currentPublic and nextPublic.
-5. The StateProof is the state basis for the slot's first Ticket (ICP with `signCounter` 1, §12.8 item 1); the page does not call GetState before signing it.
-
-#### 12.9.2 Signing
-
-1. The page submits the message to the enterprise. The enterprise durably stores it, which serves as the Outbox on this route; checks the state basis and approves the content (§12.8); and returns VCAPREQ (op 1, slot handle, kind, Ticket, message) with a single-use challenge. The state basis is the enterprise's archived state of the slot, which the StateProof of §12.9.1 and the `signCount` and Signed result of every earlier signature keep current, so the page does not call GetState first. A wrapped GetState is needed only when the slot is in doubt (§12.9.3).
-2. The page calls `navigator.credentials.get()` with `allowCredentials` containing only VCAPREQ and `userVerification: "required"`. The user enters the PIN and touches once (over NFC, the tap).
-3. The enterprise verifies the clientDataJSON, `deviceSig` with the registered attestation key, and the Signed result per §12.2 step 6, and checks that `signCount` equals the Ticket's `signCounter`. It then archives the signature.
-
-#### 12.9.3 Unknown Outcome
-
-Browsers report every authenticator error as a generic failure, so the page cannot tell from a failed `get()` whether a signature was made. When `get()` fails or the page is closed before the result is archived, the enterprise marks the slot in doubt and issues no Ticket for another message on it until it has reconciled per §12.3. On this route reconciliation takes one call, a wrapped GetState (op 2) with key 6 set to the Ticket's `originalDigest` (§7.14.5); on the native route it is a GetState followed by Recover.
-
-- If the counter reached the Ticket's `signCounter` and `Signed` is returned, the enterprise verifies it per §12.2 step 6 and archives it.
-- If the counter did not advance, nothing was signed and the Ticket is still valid for the same message. The signature is made only when the user starts it again with a new `get()`; the page MUST NOT repeat it automatically.
-- If the counter advanced but `Signed` is null, a later signature has replaced lastSigned (and, for a group signature, the group record), and the enterprise proceeds per §12.3.
-
-A user who dismisses the browser dialog causes `CTAPHID_CANCEL`, handled per §12.4.
+This section number is not used.
 
 ### 12.10 Group Participation
 
@@ -1502,7 +1384,7 @@ These procedures apply to an authenticator that implements group member signing.
 5. **Coordination message.** The member sends the group event and its indexed signature to the other members in an `exn` with route `/multisig/icp`, `/multisig/ixn` or `/multisig/rot` and `i` equal to the member AID, signed under kind 4 with its own Ticket. A member signature on a group event therefore takes two touches.
 6. **Group messages.** An `exn` sent by the group AID, for example an IPEX `grant` of a credential the group issues, is signed by each member under kind 9 (GROUP_EXN, §8.5.4); a `rpy` of the group AID, for example `/end/role/add` for the group, under kind 5. The member encodes its signature per §9.4 and sends it to the other members in a `/multisig/exn` or `/multisig/rpy` `exn` under kind 4. A member cannot sign a group `exn` before it has signed one key event of that group (§8.5.4); for a credential the group issues, the group `ixn` that anchors the issuance satisfies this, since the member signs it before the `grant`.
 7. **Completion.** The group event or message becomes valid once signatures meeting the group's thresholds are collected and, for an event, it is accepted by the group's witnesses. The enterprise reports these stages separately (§12.2 step 8).
-8. **Abandoned proposal.** When a group event does not reach its threshold and the members agree on a different event at the same sequence number, a member whose group record holds the abandoned event signs the replacement with GROUP_SUPERSEDE (kind 8), under a Ticket the enterprise issues per §12.8 item 7.5. A member whose record does not hold that sequence number signs the replacement with GROUP. When the group's witnesses have accepted a different event at a sequence number without this member's signature, a member whose record holds another event at that sequence number signs the accepted event the same way before it can sign the next event (§8.4.4 item 5). An abandoned `icp` names a different group AID than its replacement and therefore needs no replacement signature; when all of a slot's group records are in use, a later group `icp` reuses the record of an abandoned inception under GROUP_SUPERSEDE (§8.4.4 item 6), and otherwise the record remains until Reset.
+8. **Abandoned proposal.** When a group event does not reach its threshold and the members agree on a different event at the same sequence number, a member whose group record holds the abandoned event signs the replacement with GROUP_SUPERSEDE (kind 8), under a Ticket the enterprise issues per §12.8 item 7.5. A member whose record does not hold that sequence number signs the replacement with GROUP. When the group's witnesses have accepted a different event at a sequence number without this member's signature, a member whose record holds another event at that sequence number signs the accepted event the same way before it can sign the next event (§8.4.4 item 5). If that record's `replaced` is already set, because the member signed a replacement at that sequence number that the witnesses did not accept either, it cannot sign the accepted event and can next sign only an event at least two sequence numbers above its record; this needs three different events at one sequence number. An abandoned `icp` names a different group AID than its replacement and therefore needs no replacement signature; when all of a slot's group records are in use, a later group `icp` reuses the record of an abandoned inception under GROUP_SUPERSEDE (§8.4.4 item 6), and otherwise the record remains until Reset.
 9. **Recovery.** A lost response is reconciled per §12.3 (group signatures).
 
 ---
@@ -1514,7 +1396,7 @@ These procedures apply to an authenticator that implements group member signing.
 | Threat | Guarantee | Assumptions and limits |
 |---|---|---|
 | Platform copies private keys through the normal interface | Keys are generated inside the authenticator and the interface has no export | Invasive physical extraction, fault injection and side channels are out of scope |
-| Platform silently produces new signatures | Requires a SIGN token (or a `ga` token on the WebAuthn route), a valid Ticket and a new UP | A touch or tap proves presence, not that the content was seen |
+| Platform silently produces new signatures | Requires a SIGN token, a valid Ticket and a new UP | A touch or tap proves presence, not that the content was seen |
 | Enterprise signs unilaterally | Role keys only issue Tickets; signing requires the in-authenticator private key and UP | Relies on trusted firmware |
 | Employee bypasses enterprise policy | No Ticket, no signature | |
 | Rotation to a platform-generated key | k / n / newNext are constrained to in-authenticator keys, and rot is signed with the in-authenticator old.next | Covers rotation only; other forms of long-term takeover are addressed by the enterprise controls of §12.8 |
@@ -1526,11 +1408,11 @@ These procedures apply to an authenticator that implements group member signing.
 ### 13.2 Remaining Risks
 
 1. **Induced signing:** UP confirms presence only, so the authenticator cannot tell whether the user was induced to sign a well-formed but malicious message. Independent enterprise approval of the message, recipients, attachments, route, receiving domain and deadline is required.
-2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY carry their own validity (`dt`) that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, or Resets the authenticator.
+2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY carry their own validity (`dt`) that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, or Resets the authenticator. An enterprise window for unused Tickets (VCAP-EI §10.3 item 2) limits when the enterprise hands out a Ticket and dispatches the resulting message; it does not limit archiving (§12.8 item 8).
 3. **NFC tap as UP:** over NFC the tap satisfies UP for one request per field session. A compromised platform that holds a valid PIN token and Ticket can use the user's next tap for its own request, just as it can use a sensor press; a tap also happens when the authenticator is left on a reader. Enterprise approval of the message content remains the control.
 4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.13), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
-5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform, or any page served from an RP ID listed in `webauthnRpIds`, can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8). The enterprise lists only RP IDs whose pages it controls. Pages on other RP IDs cannot detect the VCAP function: the authenticator answers them as a security key without it (§7.14.1).
-6. **Browser compatibility:** the WebAuthn route depends on browsers and platform authenticator APIs forwarding the private algorithm identifier, credential IDs of up to 1023 bytes and an opaque `signature` unchanged. Where a platform does not, the native route (§7.4–§7.12) remains available.
+5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8).
+6. **Web pages:** a web page cannot reach the VCAP operations; to every page the authenticator is an ordinary security key (§7.13 item 7). An enterprise web application that needs the authenticator works through a platform client that implements this document, so the PIN, the context and the Outbox stay on the platform (§12.1, §12.2).
 7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility. Enterprises SHOULD tell users what Reset erases (§12.7 step 2). Such a Reset also removes the enterprise binding: afterwards any party can bind the authenticator to its own enterprise, as with a factory-new one, so the binding does not prevent reuse of a lost or stolen authenticator. It leaves no enterprise record; the enterprise detects it from the next BindingProof (§7.4.3, §12.7).
 8. **Group records:** group records are released only by Reset, or for an abandoned inception by reuse under GROUP_SUPERSEDE (§8.4.4 item 6), so a slot takes part in at most `GROUP_RECORDS` group AIDs at a time; enterprises SHOULD approve a member signature on a group `icp` only after all members have agreed on its bytes. Because a slot signs only at increasing sequence numbers of a group, one signature on an event far ahead of the group's accepted state, approved in error or by a compromised role key, keeps the slot from signing the group's lower sequence numbers until Reset; §12.8 item 7.2 therefore approves only `s` = accepted sequence + 1. Each record needs a Ticket, so only the enterprise can consume them. GROUP_SUPERSEDE lets a member sign a second event, and never a third, at a sequence number it has already signed; an attacker who holds a role key with bit 15, a PIN token and a user touch can thereby add this member's signature to a competing event. The enterprise confines bit 15 to a separately controlled role key (§12.8 item 7.5) and audits `supersedeCount`.
 9. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch, and the attestation certificate chain, which also names the manufacturer and anything the manufacturer puts in the certificates. Manufacturers SHOULD NOT place per-customer data in attestation certificates. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands. After a Reset the device is in STOCK_UNBOUND and discloses only the device identifier and the certificate chain.
@@ -1572,9 +1454,6 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | Number of slots | 4 |
 | GROUP_RECORDS | 2 per slot (group member signing only) |
 | TrustConfig roles | 1..8; keyId 1..16 bytes |
-| TrustConfig webauthnRpIds | 0..4 |
-| VCAP_ALG | -65700 (COSE, private use; WebAuthn route only) |
-| VCAPREQ | ≤ 1023 bytes |
 | Slot signature counter | 0..2^32−1 |
 | CBOR depth / item count | ≤ 16 / ≤ 1024 |
 | VCAP permission bits | READ=0x0100, SIGN=0x0200, MANAGE=0x0400 |
@@ -1679,7 +1558,7 @@ An enterprise (or any verifier of StateProof) performs the following steps once,
 1. Obtain the manufacturer's CA certificates through a trusted channel independent of the device and of the platform: the root, which is the trust anchor, and the issuing CA certificates.
 2. Obtain the chain from the device (binding-mode GetState with `includeChain`, §7.4.3), or from an enrollment package (D.3). Build the certification path from the leaf: the issuer of each certificate is the next chain entry if there is one, otherwise the configured CA certificate whose subject equals its issuer name. A chain entry equal to the configured root byte for byte ends the path. The path MUST use every chain entry, MUST end at the configured root and MUST satisfy D.1 at the current time.
 3. Take `attestationPublic` from the leaf and compute `device`.
-4. Bind (device, attestationPublic) to the enrollment record (D.4). Thereafter verify every StateProof and WebAuthn `deviceSig` with that enrolled key (§9.3, §7.14.5).
+4. Bind (device, attestationPublic) to the enrollment record (D.4). Thereafter verify every StateProof with that enrolled key (§9.3).
 
 A verifier MAY also re-verify the chain each time it uses a StateProof. A chain certificate that expires then makes the device unusable for that verifier, so manufacturers SHOULD issue certificates valid for the device's whole service life.
 
@@ -1717,7 +1596,7 @@ Signatures are computed with RFC 8032 deterministic Ed25519. VCAP leaves the sig
 
 ### E.0 Inputs
 
-Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the labels attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, key-agreement (P-256 scalar = seed mod (n - 1) + 1). The slots are slot 0 (WORK) and slot 1 (CLIENT) of reset epoch 0.
+Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the labels attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, pin-token (pinUvAuthToken), challenge, key-agreement (P-256 scalar = seed mod (n - 1) + 1). The slots are slot 0 (WORK) and slot 1 (CLIENT) of reset epoch 0.
 
 | Input | Value |
 |---|---|
@@ -1733,12 +1612,10 @@ Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the l
 | slot0 nextPublic | `228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3d` |
 | slot1 (CLIENT) currentPublic | `7ca14221c7a974006861637fda5cb3062b5adfee4feb58e43887313771cf0692` |
 | slot1 nextPublic | `576f07a58f3368a19da7a5a9153ffe9f64cb1bf613f560b8a7fc8169ea67c574` |
-| handleKey | `0d041887d7cf7864d6d577a5b534807ad29f13175de2e28bb08b118276857d2b` |
 | pinUvAuthToken | `83eaddd0d8b0571de37099f0b36fa87fcd6a74eb898d4f2e1edde10d1b0baa4c` |
 | challenge | `5a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` |
 | keyAgreementPrivateScalar | `521f6cb05ab172aca6ad5d25801ab97f98aca8396212d74031ba5c25240fb579` |
 | enterpriseIdentifier | `VLEIAUTHEXAMPLE00001` |
-| rpId | `vlei.example.com` |
 | resetEpoch | `0` |
 
 ### E.1 Identifiers
@@ -1756,24 +1633,24 @@ Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the l
 
 ### E.3 TrustConfig
 
-body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], [SHA-256(rpId)]]
+body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], []]
 
 - **body:**
 
   ```
-  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a
+  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca80
   ```
 - **rootSignature:**
 
   ```
-  7b960130c2482c0edcc52437ab8e787d1bafdcc2fcb3b32cd4bdae0cdfae0c9fc4405f61dd673a1ce546773bafbe19f55294e420e2974190d3a2d8eeade7fe0a
+  4a20b8668d41db51beef20810e6732462b98e478c182157e7d6405938a468067a66cf8621037fa3633f166ec5f8af5b21273bc1cd646fb2c32069a7c33117203
   ```
 - **envelope:**
 
   ```
-  82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a58407b960130c2482c0edcc52437ab8e787d1bafdcc2fcb3b32cd4bdae0cdfae0c9fc4405f61dd673a1ce546773bafbe19f55294e420e2974190d3a2d8eeade7fe0a
+  82587588025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca8058404a20b8668d41db51beef20810e6732462b98e478c182157e7d6405938a468067a66cf8621037fa3633f166ec5f8af5b21273bc1cd646fb2c32069a7c33117203
   ```
-- **configurationDigest:** `17057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd763`
+- **configurationDigest:** `c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e`
 
 ### E.4 KERI events
 
@@ -1863,42 +1740,22 @@ slot 0 ACTIVE WORK after the ICP; authState [8, 0, READ|SIGN, 0, 590000]
 - **stateBody:**
 
   ```
-  87025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600
+  87025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600
   ```
 - **signature:**
 
   ```
-  46c5e646e1cb8008fc7e88c482a4078d53625ecf1bc759b80a4b751a9e1b27c306a91395a1fd366e37cbe52ee064946653ffd672a0edf3e01cecaefd176e0109
+  4d0d843c9e24c8830d71dae0e105faf5a568ff1763d4295552cc6a0dd1b536045d07111b5c577807549027fde4b5210d8fbc83904c8b92a357c7eaf6b4e0430c
   ```
 - **StateProof:**
 
   ```
-  a20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f60002584046c5e646e1cb8008fc7e88c482a4078d53625ecf1bc759b80a4b751a9e1b27c306a91395a1fd366e37cbe52ee064946653ffd672a0edf3e01cecaefd176e0109
+  a20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6000258404d0d843c9e24c8830d71dae0e105faf5a568ff1763d4295552cc6a0dd1b536045d07111b5c577807549027fde4b5210d8fbc83904c8b92a357c7eaf6b4e0430c
   ```
 
-### E.9 WebAuthn route
+### E.9 (Reserved)
 
-- **slotHandle (slot 0, WORK):** `5648318300000286867ec34f2153cf3f8421604168f7a0`
-- **VCAPREQ GetState (op 2):** `565131a2010202575648318300000286867ec34f2153cf3f8421604168f7a0`
-- **VCAPREQ GetState with originalDigest (op 2, key 6):** `originalDigest` = H(ICP of E.4)
-
-  ```
-  565131a3010202575648318300000286867ec34f2153cf3f8421604168f7a00658200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a415
-  ```
-
-The two results below carry a StateProof over the state of E.8 with authState `[8, 0, READ, 0, 590000]`, the permissions reported on this route (§7.14.2); the StateProof of E.8 itself is unchanged.
-
-- **result_bstr GetState with originalDigest, matching** (`[StateProof, Signed of E.7]`):
-
-  ```
-  825901aaa20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190100001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840a7e05ed6a7728b429bf67d4aeac46b0ab3b33f4b8e2ea729b3147e69b68a78a4773c44e42d92158307a5f412b43e7129548beabe5a0ca4077545ba892aa1de0fa50158401f051fa68d30a483040625b92607a2ac92b0f4ac277279f9c8947f0d2f91a3a898ef252283079b399092b116fdecfe47a925522e5035dc76bd9327f6967456010258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89150358200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150419012b0501
-  ```
-- **result_bstr GetState with originalDigest, null** (`[StateProof, null]`):
-
-  ```
-  825901aaa20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76358205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190100001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840a7e05ed6a7728b429bf67d4aeac46b0ab3b33f4b8e2ea729b3147e69b68a78a4773c44e42d92158307a5f412b43e7129548beabe5a0ca4077545ba892aa1de0ff6
-  ```
-- **rpIdHash:** `02e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a`
+This appendix number is not used.
 
 ### E.10 (Reserved)
 
@@ -1942,7 +1799,7 @@ An authenticator rejects each of the following. The Ticket uses the body of E.5;
 | Negative case | Input | Status |
 |---|---|---|
 | GetState keys 1 and 2 | `50a20158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c0258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` | `0x02` |
-| Personalize epoch mismatch | `82589788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050103068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a5840f61501b91bae6c2b6ccbc1b670b6d13d90f7f6ab4d049c3eaeb7a74819d82ceb02800db37628967365dfaba005a21719d38765b29b009b223a5e7e508135ff0c` | `0xf8` |
+| Personalize epoch mismatch | `82587588025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050103068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca80584098dc5c715fb8e27b82069eb013c329835ebae0789c08216c4bc80f28b2392d558c90280c93f3ec7a79cdd22cbcdf5087a27b967fb9e5647085d7e63d7fb59e0f` | `0xf8` |
 
 ### E.12 Binding mode
 
@@ -2014,22 +1871,22 @@ Uses the existing E.0 inputs and challenge. The ENTERPRISE_BOUND vector uses res
 - **bindingBody:**
 
   ```
-  85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd763
+  85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a8697005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e
   ```
 - **signature:**
 
   ```
-  72591861a94d8c8b28626a37b7dfdc5b4058b8792ea58a62596dc47fce5f38b4597b185c0f4b06b6a6e482d8ee765064716d20cbeac1d7ba795d1a236ceba80c
+  919d3c8e75b68de92889c61c32f7df775a2325371a4528f5a4b276272fd3e0a7bf69f42886f1964b0d103e3002c4503d36cc24c54b106bc89bd99ed92d78e403
   ```
 - **BindingProof:**
 
   ```
-  a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76302584072591861a94d8c8b28626a37b7dfdc5b4058b8792ea58a62596dc47fce5f38b4597b185c0f4b06b6a6e482d8ee765064716d20cbeac1d7ba795d1a236ceba80c
+  a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a8697005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e025840919d3c8e75b68de92889c61c32f7df775a2325371a4528f5a4b276272fd3e0a7bf69f42886f1964b0d103e3002c4503d36cc24c54b106bc89bd99ed92d78e403
   ```
 - **response:**
 
   ```
-  00a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869700582017057823ba14c0b06a1e87eac189f34d19df9c54c98e17ad33f48061b12dd76302584072591861a94d8c8b28626a37b7dfdc5b4058b8792ea58a62596dc47fce5f38b4597b185c0f4b06b6a6e482d8ee765064716d20cbeac1d7ba795d1a236ceba80c
+  00a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a8697005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e025840919d3c8e75b68de92889c61c32f7df775a2325371a4528f5a4b276272fd3e0a7bf69f42886f1964b0d103e3002c4503d36cc24c54b106bc89bd99ed92d78e403
   ```
 
 PIN_READY rejects request `50a10258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` with `0xf0`.
@@ -2038,13 +1895,13 @@ PIN_READY rejects request `50a10258205a84ea3d29fdb36a002309ef83718fb014b8a770a44
 
 Uses the E.0 inputs and in addition the seed labels member2-current, member2-next, member2-newnext and slot0-newnext. Slot 0 (WORK, AID of E.4) and an external member 2 form a two-member group with `kt="2"`, slot 0 listed second. Slot 0 signs its own `icp` (signCounter 1) and then the group `icp` under kind 7 (signCounter 2). The group `rot` assumes that slot 0 has rotated its own AID (current = former next) and lists it first, so its index and ondex differ. The StateProof uses the authState of E.8. E.13 runs under its own TrustConfig, below: E.3's role `ops` (`0x1F03`) has no group bits, so the same role key is installed with all bits of Appendix B (`0x1DF03`). KeyRef does not depend on the configuration, so the KeyRef of E.5 applies unchanged; only the configurationDigest in the StateProof differs from E.8. After that StateProof, slot 0 signs the group `exn` under kind 9 (signCounter 3).
 
-- **group TrustConfig:** body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1DF03, rolePublic]], [SHA-256(rpId)]]
+- **group TrustConfig:** body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1DF03, rolePublic]], []]
 - **group TrustConfig envelope:**
 
   ```
-  82589988025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f70731a0001df0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca81582002e0ac1700a0b6825d49dc66e31a417183dbba7bc05853be59f465e59dec4d2a5840f00f50809274052ee017bdd4d006c69d042d15a586a4d11e70ab1e363e8c437ea84a3f32c8ebcb7572237b9458bd35562165c029912ba3414cf76f9428317604
+  82587788025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f70731a0001df0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca805840bbf3bf557c01b992e0a460aae77397f0b344ad2e9f26c8aa894278414bbf9e644bb5ce1fb768824250e87fc55b367287d9785a6101ccf048ef313cd902bc5906
   ```
-- **group TrustConfig configurationDigest:** `7fbd7e82383cd70ed3c271c6fc56cd758e345157be77cf928ff4dba1f6966ebe`
+- **group TrustConfig configurationDigest:** `c6f42e1667f679e56cf27261a033006a34b971e10acffe3c7b4726d6610ebf82`
 - **member2 currentPublic:** `cd2de7a36c2a429a16872dcd18f708dad35e2318fe3f8157726d24878559917f`
 - **member2 nextPublic:** `c430d44351ccad77e0f0d9f2c9c0dea4707ffe78ddae70d93a2089f64e639aa9`
 - **group icp (UTF-8):**
@@ -2073,12 +1930,12 @@ Uses the E.0 inputs and in addition the seed labels member2-current, member2-nex
 - **stateBody with group element:**
 
   ```
-  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058207fbd7e82383cd70ed3c271c6fc56cd758e345157be77cf928ff4dba1f6966ebe58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd020000
+  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820c6f42e1667f679e56cf27261a033006a34b971e10acffe3c7b4726d6610ebf8258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd020000
   ```
 - **StateProof with group element:**
 
   ```
-  a2015901ed88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058207fbd7e82383cd70ed3c271c6fc56cd758e345157be77cf928ff4dba1f6966ebe58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd02000002584014fccee56dc72a65c7f2320e76403ff865209a1ec4cb1a06409d29c1609f06a3321bb602d1690ee25a634255da78bba31e1f43645371aa815ad3d7e7ad45af09
+  a2015901ed88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820c6f42e1667f679e56cf27261a033006a34b971e10acffe3c7b4726d6610ebf8258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd0200000258404102a42f3f89051d76ce1480dc2620c8efa2331639a728a66dc9823ccccd0578d2b05f93b9c2f87ab426cd21fcc358228900a9f13d249ac9a2990af25feebc0c
   ```
 - **indexed signature, group icp (index 1, code A):**
 
@@ -2120,3 +1977,16 @@ Uses the E.0 inputs and in addition the seed labels member2-current, member2-nex
   ```
   a501584014a042c5c7d45041f460602f395c1ed1d0422fba72f8f37e2ba6f1866609a87b3bf2addbbde8ba7b2ddff5eedf6a229c927b033c0e28c28e69d1d177500154040258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b891503582058c38bad4da77b610acb20e1ea39b6b6099c3fb5c83fb41ac2d3841d5e04a870041901190503
   ```
+
+## Appendix F Change Control
+
+**Change control.** This document follows these rules from the Candidate onward:
+
+1. **Versions.** A 1.0.x revision only corrects errors: it changes no message bytes, no domain separator or code point, and no outcome for an implementation that followed the intended reading. A 1.y revision only adds: new optional operations, fields behind a new version path, or new registered values; an implementation of 1.0 remains conformant. Any other change requires 2.0.
+2. **Section numbers.** Published section and appendix numbers are not reused. A removed section remains as a heading marked "(Reserved)".
+3. **Registered values.** Command codes, status codes, GetInfo keys, signing kinds, role capability bits (Appendix B), signature domains (§6.5) and TrustConfig versions are assigned only by a published version of the relevant document. A value is never reassigned; a withdrawn value is marked Reserved.
+4. **Errata.** Errata are submitted as issues in the document's repository. An accepted erratum is published in a 1.0.x revision and listed in the change log.
+
+**Change log.**
+
+- **11 November 2026, Candidate Specification.** Archiving of a verified signature separated from dispatch admission and delivery (VCAP-EI §§ 6.3, 7.9, 7.18, 7.19, 10.4–10.7; VAF §§ 2.3, 5.3, 6.3; VCAP §12.2, §12.8 item 8). The WebAuthn route removed (formerly VCAP §7.14; VCAP §12.9 and VCAP-EI §8 are now Reserved); the TrustConfig field that listed its RP IDs is now `reserved` and is the empty array (VCAP §9.1); test vectors regenerated (VCAP Appendix E). Purpose 13 withdrawn (VCAP-EI Appendix B). The maximum message age bounded by what receivers accept (VCAP-EI §10.5 item 5). Conformance test GROUP-T14 for groups with an independent software member added (VAF Section 12). License, intellectual-property and change-control terms added.

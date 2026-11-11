@@ -128,7 +128,6 @@ root_seed = label_seed("enterprise-root")
 role_seed = label_seed("role-ops")
 s0_cur_seed, s0_next_seed = label_seed("slot0-current"), label_seed("slot0-next")
 s1_cur_seed, s1_next_seed = label_seed("slot1-current"), label_seed("slot1-next")
-handle_key = label_seed("handle-key")
 token = label_seed("pin-token")
 challenge = label_seed("challenge")
 ka_scalar = int.from_bytes(label_seed("key-agreement"), "big") % (
@@ -143,23 +142,22 @@ _, s1c_pub = ed_keypair(s1_cur_seed)
 _, s1n_pub = ed_keypair(s1_next_seed)
 
 enterprise_id = "VLEIAUTHEXAMPLE00001"
-rp_id = "vlei.example.com"
 reset_epoch = 0
 WORK, CLIENT = 2, 1
 
 I.update({
     "seed derivation": "seed(label) = SHA-256('vcap-tv:' || label)",
-    "seed labels": "attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, handle-key, pin-token (pinUvAuthToken), challenge, key-agreement (P-256 scalar = seed mod (n - 1) + 1)",
+    "seed labels": "attestation, enterprise-root, role-ops, slot0-current, slot0-next, slot1-current, slot1-next, pin-token (pinUvAuthToken), challenge, key-agreement (P-256 scalar = seed mod (n - 1) + 1)",
     "attestationSeed": hx(att_seed), "attestationPublic": hx(att_pub),
     "enterpriseRootSeed": hx(root_seed), "enterpriseRoot": hx(root_pub),
     "roleSeed(ops)": hx(role_seed), "rolePublic(ops)": hx(role_pub),
     "slot0 (WORK) currentSeed": hx(s0_cur_seed), "slot0 currentPublic": hx(s0c_pub),
     "slot0 (WORK) nextSeed": hx(s0_next_seed), "slot0 nextPublic": hx(s0n_pub),
     "slot1 (CLIENT) currentPublic": hx(s1c_pub), "slot1 nextPublic": hx(s1n_pub),
-    "handleKey": hx(handle_key), "pinUvAuthToken": hx(token),
+    "pinUvAuthToken": hx(token),
     "challenge": hx(challenge),
     "keyAgreementPrivateScalar": "%064x" % ka_scalar,
-    "enterpriseIdentifier": enterprise_id, "rpId": rp_id, "resetEpoch": reset_epoch,
+    "enterpriseIdentifier": enterprise_id, "resetEpoch": reset_epoch,
 })
 
 # ---------------------------------------------------- identifiers (§6.3)
@@ -185,13 +183,13 @@ V["E.2 KERI encodings"] = {
 # ---------------------------------------------------------- TrustConfig (§9.1)
 
 roles = [["ops", 0x1F03, role_pub]]
-rp_ids = [H(rp_id.encode())]
-tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, roles, rp_ids])
+reserved = []  # TrustConfig reserved field: always the empty array
+tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, roles, reserved])
 tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + tc_body)
 tc_env = cbor([tc_body, tc_sig])
 config_digest = H(tc_env)
 V["E.3 TrustConfig"] = {
-    "content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], [SHA-256(rpId)]]",
+    "content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], []]",
     "body": hx(tc_body), "rootSignature": hx(tc_sig), "envelope": hx(tc_env),
     "configurationDigest": hx(config_digest),
 }
@@ -284,24 +282,6 @@ V["E.8 StateProof (after ICP)"] = {
     "stateBody": hx(state_body), "signature": hx(state_sig), "StateProof": hx(state_proof),
 }
 
-# ------------------------------------------------------ WebAuthn route (§7.14)
-
-hpart = cbor([reset_epoch, 0, WORK])
-tag = hmac.new(handle_key, b"VCAP-HANDLE\0" + hpart, hashlib.sha256).digest()[:16]
-slot_handle = b"VH1" + hpart + tag
-vcapreq = b"VQ1" + cbor({1: 2, 2: slot_handle})
-# Wrapped GetState reports READ, preserving the existing E.8 proof unchanged.
-wrapped_state_body = cbor([2, device, reset_epoch, config_digest, challenge, [8, 0, 0x0100, 0, 590000], slots])
-wrapped_state_proof = cbor({1: wrapped_state_body, 2: ed_sign(att_sk, b"VCAP-STATE\0" + wrapped_state_body)})
-V["E.9 WebAuthn route"] = {
-    "slotHandle (slot 0, WORK)": hx(slot_handle),
-    "VCAPREQ GetState (op 2)": hx(vcapreq),
-    "VCAPREQ GetState with originalDigest (op 2, key 6)": hx(b"VQ1" + cbor({1: 2, 2: slot_handle, 6: H(icp)})),
-    "result_bstr GetState with originalDigest matching": hx(cbor([wrapped_state_proof, {1: icp_sig, 2: s0c_pub, 3: H(icp), 4: len(icp), 5: 1}])),
-    "result_bstr GetState with originalDigest null": hx(cbor([wrapped_state_proof, NULL])),
-    "rpIdHash": hx(rp_ids[0]),
-}
-
 # ------------------------------------------------------------- negative cases
 
 s_int = int.from_bytes(t_sig[32:], "little")
@@ -343,7 +323,7 @@ for name, lifecycle, epoch, digest in (
 V["E.12 Binding mode"] = binding_vectors
 N["GetState keys 1 and 2"] = {"request": hx(bytes([0x50]) + cbor({1: challenge, 2: challenge})), "status": "02"}
 N["Binding mode PIN_READY"] = {"request": hx(bytes([0x50]) + cbor({2: challenge})), "status": "f0"}
-mismatch_body = cbor([2, device, tenant, reset_epoch + 1, 0x03, 6, roles, rp_ids])
+mismatch_body = cbor([2, device, tenant, reset_epoch + 1, 0x03, 6, roles, reserved])
 mismatch_env = cbor([mismatch_body, ed_sign(root_sk, b"VCAP-TRUST\0" + mismatch_body)])
 N["Personalize epoch mismatch"] = {"configuration": hx(mismatch_env), "status": "f8"}
 
@@ -384,7 +364,7 @@ g_icp, gaid = keri_event([
 # E.13 runs under its own TrustConfig: E.3's role 'ops' (0x1F03) carries no
 # group bits, so the same role key is installed with all bits of Appendix B.
 g_roles = [["ops", 0x1DF03, role_pub]]
-g_tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, g_roles, rp_ids])
+g_tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, g_roles, reserved])
 g_tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + g_tc_body)
 g_tc_env = cbor([g_tc_body, g_tc_sig])
 g_config_digest = H(g_tc_env)
@@ -422,7 +402,7 @@ gx_t_body, gx_t_sig, gx_t_env = ticket(9, kref0, 3, g_exn)
 gx_signed = cbor({1: g_exn_sig, 2: s0c_pub, 3: H(g_exn), 4: len(g_exn), 5: 3})
 
 V["E.13 Group member signing"] = {
-    "group TrustConfig content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1DF03, rolePublic]], [SHA-256(rpId)]]",
+    "group TrustConfig content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1DF03, rolePublic]], []]",
     "group TrustConfig envelope": hx(g_tc_env),
     "group TrustConfig configurationDigest": hx(g_config_digest),
     "member2 currentPublic": hx(m2c_pub), "member2 nextPublic": hx(m2n_pub),
@@ -458,7 +438,7 @@ ed_verify(role_pub, t_sig, b"VCAP-SIGN\0" + t_body)
 ed_verify(s0c_pub, icp_sig, icp)
 ed_verify(att_pub, state_sig, b"VCAP-STATE\0" + state_body)
 assert len(t_env) <= 512 and len(tc_env) <= 1536 and len(state_body) <= 1536
-assert len(request) <= 2048 and len(vcapreq) <= 1023
+assert len(request) <= 2048
 
 json.dump(out, sys.stdout, indent=2, ensure_ascii=False)
 print()

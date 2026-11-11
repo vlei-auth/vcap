@@ -1,6 +1,6 @@
 # vLEI Client to Authenticator Protocol (VCAP)
 
-Read the [VCAP 1.0 Editor's Draft](https://vlei-auth.github.io/vcap/).
+Read the [VCAP 1.0 Candidate Specification](https://vlei-auth.github.io/vcap/).
 
 The specification source is `vcap-1.0.md`. Edit that file to update the published
 document. GitHub Pages builds `index.md` with Jekyll from the `main` branch.
