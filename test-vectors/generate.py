@@ -183,8 +183,8 @@ V["E.2 KERI encodings"] = {
 # ---------------------------------------------------------- TrustConfig (§9.1)
 
 roles = [["ops", 0x1F03, role_pub]]
-reserved = []  # TrustConfig reserved field: always the empty array
-tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, roles, reserved])
+extensions = []  # TrustConfig extensions field: empty
+tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, roles, extensions])
 tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + tc_body)
 tc_env = cbor([tc_body, tc_sig])
 config_digest = H(tc_env)
@@ -320,10 +320,10 @@ for name, lifecycle, epoch, digest in (
         "bindingBody": hx(binding_body), "signature": hx(binding_sig),
         "BindingProof": hx(binding_result), "response": "00" + hx(binding_result),
     }
-V["E.12 Binding mode"] = binding_vectors
+V["E.10 Binding mode"] = binding_vectors
 N["GetState keys 1 and 2"] = {"request": hx(bytes([0x50]) + cbor({1: challenge, 2: challenge})), "status": "02"}
 N["Binding mode PIN_READY"] = {"request": hx(bytes([0x50]) + cbor({2: challenge})), "status": "f0"}
-mismatch_body = cbor([2, device, tenant, reset_epoch + 1, 0x03, 6, roles, reserved])
+mismatch_body = cbor([2, device, tenant, reset_epoch + 1, 0x03, 6, roles, extensions])
 mismatch_env = cbor([mismatch_body, ed_sign(root_sk, b"VCAP-TRUST\0" + mismatch_body)])
 N["Personalize epoch mismatch"] = {"configuration": hx(mismatch_env), "status": "f8"}
 
@@ -361,15 +361,15 @@ g_icp, gaid = keri_event([
     ("nt", "2"), ("n", [commit(m2n_pub), commit(s0n_pub)]),
     ("bt", "0"), ("b", []), ("c", []), ("a", []),
 ], said_labels=("d", "i"))
-# E.13 runs under its own TrustConfig: E.3's role 'ops' (0x1F03) carries no
+# E.11 runs under its own TrustConfig: E.3's role 'ops' (0x1F03) carries no
 # group bits, so the same role key is installed with all bits of Appendix B.
-g_roles = [["ops", 0x1DF03, role_pub]]
-g_tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, g_roles, reserved])
+g_roles = [["ops", 0xFF03, role_pub]]
+g_tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, g_roles, extensions])
 g_tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + g_tc_body)
 g_tc_env = cbor([g_tc_body, g_tc_sig])
 g_config_digest = H(g_tc_env)
-# Slot 0 signs: own icp (counter 1), group icp under kind 7 (counter 2).
-g_t_body, g_t_sig, g_t_env = ticket(7, kref0, 2, g_icp)
+# Slot 0 signs: own icp (counter 1), group icp under kind 6 (counter 2).
+g_t_body, g_t_sig, g_t_env = ticket(6, kref0, 2, g_icp)
 g_icp_sig = ed_sign(s0c_sk, g_icp)
 g_signed = cbor({1: g_icp_sig, 2: s0c_pub, 3: H(g_icp), 4: len(g_icp), 5: 2})
 g_record = [0, gaid, "icp", 0, gaid, len(g_icp), H(g_icp), 2, 0, 0]
@@ -390,25 +390,25 @@ g_rot, g_rot_said = keri_event([
 ], said_labels=("d",))
 g_rot_sig = ed_sign(s0n_sk, g_rot)
 
-# Group exn (kind 9): an IPEX grant skeleton sent by the group AID.
+# Group exn (kind 8): an IPEX grant skeleton sent by the group AID.
 g_exn, g_exn_said = keri_event([
     ("v", ""), ("t", "exn"), ("d", ""), ("i", gaid), ("rp", client_aid), ("p", ""),
     ("dt", "2026-11-07T00:00:00.000000+00:00"), ("r", "/ipex/grant"), ("q", {}),
     ("a", {"m": ""}), ("e", {}),
 ], said_labels=("d",))
 g_exn_sig = ed_sign(s0c_sk, g_exn)
-# After the StateProof, slot 0 signs the group exn under kind 9 (counter 3).
-gx_t_body, gx_t_sig, gx_t_env = ticket(9, kref0, 3, g_exn)
+# After the StateProof, slot 0 signs the group exn under kind 8 (counter 3).
+gx_t_body, gx_t_sig, gx_t_env = ticket(8, kref0, 3, g_exn)
 gx_signed = cbor({1: g_exn_sig, 2: s0c_pub, 3: H(g_exn), 4: len(g_exn), 5: 3})
 
-V["E.13 Group member signing"] = {
-    "group TrustConfig content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1DF03, rolePublic]], []]",
+V["E.11 Group member signing"] = {
+    "group TrustConfig content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0xFF03, rolePublic]], []]",
     "group TrustConfig envelope": hx(g_tc_env),
     "group TrustConfig configurationDigest": hx(g_config_digest),
     "member2 currentPublic": hx(m2c_pub), "member2 nextPublic": hx(m2n_pub),
     "group icp (UTF-8)": g_icp.decode(), "group icp length": len(g_icp),
     "group icp originalDigest": hx(H(g_icp)), "group AID": gaid,
-    "GROUP Ticket envelope (kind 7, signCounter 2)": hx(g_t_env),
+    "GROUP Ticket envelope (kind 6, signCounter 2)": hx(g_t_env),
     "GROUP Signed": hx(g_signed),
     "GetState proof-mode parameters with groupAid (before 254/255)": hx(cbor(g_getstate_P)),
     "stateBody with group element": hx(g_state_body),
@@ -419,7 +419,7 @@ V["E.13 Group member signing"] = {
     "indexed signature, current-only code B (form a joining member uses; index 0)": indexed_sig(g_rot_sig, 0),
     "group exn (UTF-8)": g_exn.decode(),
     "indexed signature, group exn (index 1, code A)": indexed_sig(g_exn_sig, 1, 1),
-    "GROUP_EXN Ticket envelope (kind 9, signCounter 3)": hx(gx_t_env),
+    "GROUP_EXN Ticket envelope (kind 8, signCounter 3)": hx(gx_t_env),
     "GROUP_EXN Signed": hx(gx_signed),
 }
 ed_verify(root_pub, g_tc_sig, b"VCAP-TRUST\0" + g_tc_body)
