@@ -184,12 +184,12 @@ V["E.2 KERI encodings"] = {
 
 roles = [["ops", 0x1F03, role_pub]]
 extensions = []  # TrustConfig extensions field: empty
-tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, roles, extensions])
+tc_body = cbor([1, device, tenant, reset_epoch, 0, NULL, 0x03, 6, roles, extensions])
 tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + tc_body)
 tc_env = cbor([tc_body, tc_sig])
 config_digest = H(tc_env)
 V["E.3 TrustConfig"] = {
-    "content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], []]",
+    "content": "body = [1, device, tenant, 0, sequence 0, prior null, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], []]",
     "body": hx(tc_body), "rootSignature": hx(tc_sig), "envelope": hx(tc_env),
     "configurationDigest": hx(config_digest),
 }
@@ -225,7 +225,7 @@ def keyref(slot, owner, pub):
 
 
 def ticket(kind, kref, counter, msg):
-    body = cbor([2, kind, kref, counter, H(msg), len(msg)])
+    body = cbor([1, kind, kref, counter, H(msg), len(msg)])
     sig = ed_sign(role_sk, b"VCAP-SIGN\0" + body)
     return body, sig, cbor([body, "ops", sig])
 
@@ -274,7 +274,7 @@ def empty_slot(i):
 slots = [[0, WORK, 2, s0c_pub, s0n_pub, NULL, aid, [1, 0, aid, len(icp), H(icp)], 1],
          empty_slot(1), empty_slot(2), empty_slot(3)]
 auth_state = [8, 0, 0x0300, 0, 590000]
-state_body = cbor([2, device, reset_epoch, config_digest, challenge, auth_state, slots])
+state_body = cbor([1, device, reset_epoch, config_digest, challenge, auth_state, slots])
 state_sig = ed_sign(att_sk, b"VCAP-STATE\0" + state_body)
 state_proof = cbor({1: state_body, 2: state_sig})
 V["E.8 StateProof (after ICP)"] = {
@@ -310,7 +310,7 @@ for name, lifecycle, epoch, digest in (
         ("ENTERPRISE_BOUND", 1, reset_epoch + 1, NULL),
         ("PERSONALIZED_NO_PIN", 2, reset_epoch, config_digest)):
     binding = NULL if lifecycle == 0 else [tenant, H(root_pub), epoch, digest]
-    binding_body = cbor([2, device, lifecycle, challenge, binding])
+    binding_body = cbor([1, device, lifecycle, challenge, binding])
     binding_sig = ed_sign(att_sk, b"VCAP-BINDING\0" + binding_body)
     binding_result = cbor({1: binding_body, 2: binding_sig})
     ed_verify(att_pub, binding_sig, b"VCAP-BINDING\0" + binding_body)
@@ -323,7 +323,7 @@ for name, lifecycle, epoch, digest in (
 V["E.10 Binding mode"] = binding_vectors
 N["GetState keys 1 and 2"] = {"request": hx(bytes([0x50]) + cbor({1: challenge, 2: challenge})), "status": "02"}
 N["Binding mode PIN_READY"] = {"request": hx(bytes([0x50]) + cbor({2: challenge})), "status": "f0"}
-mismatch_body = cbor([2, device, tenant, reset_epoch + 1, 0x03, 6, roles, extensions])
+mismatch_body = cbor([1, device, tenant, reset_epoch + 1, 0, NULL, 0x03, 6, roles, extensions])
 mismatch_env = cbor([mismatch_body, ed_sign(root_sk, b"VCAP-TRUST\0" + mismatch_body)])
 N["Personalize epoch mismatch"] = {"configuration": hx(mismatch_env), "status": "f8"}
 
@@ -361,10 +361,11 @@ g_icp, gaid = keri_event([
     ("nt", "2"), ("n", [commit(m2n_pub), commit(s0n_pub)]),
     ("bt", "0"), ("b", []), ("c", []), ("a", []),
 ], said_labels=("d", "i"))
-# E.11 runs under its own TrustConfig: E.3's role 'ops' (0x1F03) carries no
-# group bits, so the same role key is installed with all bits of Appendix B.
+# E.11 runs under the successor of E.3 installed by UpdateTrustConfig (E.12):
+# E.3's role 'ops' (0x1F03) carries no group bits, so the same role key is
+# granted all bits of Appendix B, keeping the slots of E.4-E.8.
 g_roles = [["ops", 0xFF03, role_pub]]
-g_tc_body = cbor([2, device, tenant, reset_epoch, 0x03, 6, g_roles, extensions])
+g_tc_body = cbor([1, device, tenant, reset_epoch, 1, config_digest, 0x03, 6, g_roles, extensions])
 g_tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + g_tc_body)
 g_tc_env = cbor([g_tc_body, g_tc_sig])
 g_config_digest = H(g_tc_env)
@@ -375,7 +376,7 @@ g_signed = cbor({1: g_icp_sig, 2: s0c_pub, 3: H(g_icp), 4: len(g_icp), 5: 2})
 g_record = [0, gaid, "icp", 0, gaid, len(g_icp), H(g_icp), 2, 0, 0]
 g_slots = [[0, WORK, 2, s0c_pub, s0n_pub, NULL, aid, [1, 0, aid, len(icp), H(icp)], 2],
            empty_slot(1), empty_slot(2), empty_slot(3)]
-g_state_body = cbor([2, device, reset_epoch, g_config_digest, challenge, auth_state, g_slots, g_record])
+g_state_body = cbor([1, device, reset_epoch, g_config_digest, challenge, auth_state, g_slots, g_record])
 g_state_sig = ed_sign(att_sk, b"VCAP-STATE\0" + g_state_body)
 g_state_proof = cbor({1: g_state_body, 2: g_state_sig})
 g_getstate_P = {1: challenge, 4: gaid}
@@ -402,9 +403,7 @@ gx_t_body, gx_t_sig, gx_t_env = ticket(8, kref0, 3, g_exn)
 gx_signed = cbor({1: g_exn_sig, 2: s0c_pub, 3: H(g_exn), 4: len(g_exn), 5: 3})
 
 V["E.11 Group member signing"] = {
-    "group TrustConfig content": "body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0xFF03, rolePublic]], []]",
-    "group TrustConfig envelope": hx(g_tc_env),
-    "group TrustConfig configurationDigest": hx(g_config_digest),
+    "group TrustConfig": "the successor configuration of E.12",
     "member2 currentPublic": hx(m2c_pub), "member2 nextPublic": hx(m2n_pub),
     "group icp (UTF-8)": g_icp.decode(), "group icp length": len(g_icp),
     "group icp originalDigest": hx(H(g_icp)), "group AID": gaid,
@@ -430,6 +429,30 @@ ed_verify(att_pub, g_state_sig, b"VCAP-STATE\0" + g_state_body)
 assert len(g_t_env) <= 512 and len(g_state_body) <= 1536
 assert len(indexed_sig(g_icp_sig, 1, 1)) == 88 and len(indexed_sig(g_rot_sig, 0, 1)) == 92
 assert len(indexed_sig(g_rot_sig, 0)) == 88
+
+# ------------------------------------------------ UpdateTrustConfig (§7.12)
+
+u_P = {1: g_tc_env}
+u_msg = b"VCAP-CMD\0" + context_id + bytes([0x61]) + H(cbor(u_P))
+u_param = hmac.new(token, u_msg, hashlib.sha256).digest()
+u_full = dict(u_P)
+u_full[254] = 2
+u_full[255] = u_param
+u_request = bytes([0x61]) + cbor(u_full)
+V["E.12 UpdateTrustConfig"] = {
+    "content": "successor of E.3: body = [1, device, tenant, 0, sequence 1, prior = configurationDigest of E.3, ownerMask 0x03, minPinChars 6, [['ops', 0xFF03, rolePublic]], []]",
+    "body": hx(g_tc_body), "rootSignature": hx(g_tc_sig), "envelope": hx(g_tc_env),
+    "configurationDigest": hx(g_config_digest),
+    "H(CBOR(P))": hx(H(cbor(u_P))), "auth message": hx(u_msg),
+    "pinUvAuthParam": hx(u_param), "request (command byte + CBOR)": hx(u_request),
+    "request length": len(u_request),
+}
+fork_body = cbor([1, device, tenant, reset_epoch, 1, H(b"not the installed configuration"), 0x03, 6, g_roles, extensions])
+fork_env = cbor([fork_body, ed_sign(root_sk, b"VCAP-TRUST\0" + fork_body)])
+N["UpdateTrustConfig with the installed E.3 envelope (sequence not increased)"] = {"configuration": hx(tc_env), "status": "f8"}
+N["UpdateTrustConfig whose prior is not the installed configurationDigest"] = {"configuration": hx(fork_env), "status": "f8"}
+N["Personalize with the E.12 successor (sequence 1)"] = {"configuration": hx(g_tc_env), "status": "02"}
+assert len(u_request) <= 2048
 
 # --------------------------------------------------------------- self-check
 

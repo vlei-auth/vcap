@@ -18,7 +18,7 @@
 
 ## Status of this document
 
-This is a **Candidate Specification** of VCAP 1.0, dated 11 November 2026. Its features are frozen: until it becomes final it changes only to correct errors, remove ambiguity, or resolve findings of the review below, and every such change is listed in the change log. It becomes the final 1.0 when (1) at least one Enterprise Service and one Platform, written independently of each other's code, pass the VAF conformance tests including VAF BASE-T15–T20 on real authenticators; (2) an implementation written only from these documents reproduces the test vectors of VCAP Appendix E and completes a signature and its archiving; and (3) an independent security review of VCAP, VCAP-EI and VAF has been completed and its findings resolved. Comments and errata are submitted as issues at <https://github.com/vlei-auth/vcap/issues>.
+This is a **Candidate Specification** of VCAP 1.0, dated 14 November 2026. Its features are frozen: until it becomes final it changes only to correct errors, remove ambiguity, or resolve findings of the review below, and every such change is listed in the change log. It becomes the final 1.0 when (1) at least one Enterprise Service and one Platform, written independently of each other's code, pass the VAF conformance tests including VAF BASE-T15–T20 on real authenticators; (2) an implementation written only from these documents reproduces the test vectors of VCAP Appendix E and completes a signature and its archiving; and (3) an independent security review of VCAP, VCAP-EI and VAF has been completed and its findings resolved. Comments and errata are submitted as issues at <https://github.com/vlei-auth/vcap/issues>.
 
 ## License and Intellectual Property
 
@@ -75,7 +75,7 @@ This document specifies the authenticator state model, the parameters and proces
 
 This document defines the interface between the authenticator and the platform, and the format of enterprise-signed objects consumed by the authenticator. The internal protocols of enterprise gateways, KERIA, witnesses and wallets are out of scope; Section 12 states only their requirements for using authenticator output. The interface between platforms and the enterprise service (Ticket requests, archiving and recovery) is specified by the companion [VCAP Enterprise Interface 1.0](https://vlei-auth.github.io/vcap-ei/).
 
-The VCAP operations are reachable as native CTAP vendor commands (§7.4–§7.12) over the transports of Section 11. VCAP 1.0 defines no other route.
+The VCAP operations are reachable as native CTAP vendor commands (§7.3–§7.12) over the transports of Section 11. VCAP 1.0 defines no other route.
 
 ---
 
@@ -88,8 +88,8 @@ The key words "**MUST**", "**MUST NOT**", "**REQUIRED**", "**SHOULD**", "**SHOUL
 | Class | Implements | Sections that apply |
 |---|---|---|
 | **Authenticator** | Firmware and hardware of the authenticator | §§ 5–11, Appendices A and B |
-| **Platform** | Software that sends VCAP commands: wallets, IT tools, manufacturing tools | §§ 6, 9, 10, 11 (as sender) and 12.1–12.7; 12.9 when it uses group member signing |
-| **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7, 12.8, Appendix D; 12.9 when it issues group Tickets |
+| **Platform** | Software that sends VCAP commands: wallets, IT tools, manufacturing tools | §§ 6, 9, 10, 11 (as sender), 12.1–12.7 and 12.10; 12.9 when it uses group member signing |
+| **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7, 12.8, 12.10, Appendix D; 12.9 when it issues group Tickets |
 | **Manufacturer** | Producer of the attestation identity | Appendix D.1, D.5; D.3 when it delivers enrollment packages |
 
 An Authenticator implements at least one transport of Section 11 and declares in GetInfo `transports` exactly the transports it implements (§7.1). The following features are optional; an Authenticator that implements one implements all of its requirements:
@@ -132,7 +132,7 @@ Command names, subcommand names, field names, data structure names, status codes
 | enterprise root key | The enterprise public key bound by BindEnterprise and used to verify TrustConfig (field `enterpriseRoot`) |
 | role key | A public key registered in TrustConfig and used to issue Tickets |
 | tenant | Digest of the enterprise identifier (§6.3) |
-| personalization | Installation of TrustConfig (a general smart-card term); corresponds to the Personalize command |
+| personalization | Installation of the first TrustConfig of a reset epoch (a general smart-card term); corresponds to the Personalize command |
 | lifecycle | The device-level state of the authenticator (§5.1) |
 | slot | An independent location holding one KERI identifier and its keys; there are 4, numbered 0..3 (VCAP) |
 | owner | The identity category of a slot: CLIENT=1, WORK=2 (VCAP) |
@@ -144,9 +144,9 @@ Command names, subcommand names, field names, data structure names, status codes
 | latest (head) | The type, sequence number, SAID, length, digest and original signature of the most recent committed key event of a slot |
 | KeyRef | A 32-byte reference derived from the device, reset epoch, slot, owner and the actual signing public key (VCAP, §6.3) |
 | Ticket | A signing authorization object issued by the Ticket issuer (VCAP, §9.2) |
-| TrustConfig | Device configuration signed by the enterprise root key (VCAP, §9.1) |
+| TrustConfig | Device configuration signed by the enterprise root key (VCAP, §9.1); installed by Personalize and replaced within a reset epoch by UpdateTrustConfig |
 | StateProof | Authenticator state signed by the attestation key (VCAP, §9.3) |
-| reset epoch (`resetEpoch`) | A device-wide counter: 0 when the authenticator leaves manufacturing, increased by 1 by each Reset that reaches its epoch commit, never decreased, and kept across Reset and BindEnterprise (§7.12.3) |
+| reset epoch (`resetEpoch`) | A device-wide counter: 0 when the authenticator leaves manufacturing, increased by 1 by each Reset that reaches its epoch commit, never decreased, and kept across Reset and BindEnterprise (§7.13.3) |
 | atomic commit | A set of persistent writes that take effect entirely or not at all |
 | domain separation tag | A fixed string prepended to a signature or MAC input to distinguish its purpose |
 | zeroize | Clear and invalidate volatile secrets and state |
@@ -208,13 +208,13 @@ ENTERPRISE_BOUND
 PERSONALIZED_NO_PIN
    │ ClientPIN setPIN (by the employee)
    ▼
-PIN_READY ── CreateIdentity / Sign(icp,ixn,rot,exn,rpy) / PrepareRotation / Recover / GetState …
+PIN_READY ── CreateIdentity / Sign(icp,ixn,rot,exn,rpy) / PrepareRotation / Recover / GetState / UpdateTrustConfig …
    │ Reset (within 10 s of power-up + 5 s hold)
    ▼
 STOCK_UNBOUND (binding removed, resetEpoch+1) ──> BindEnterprise and Personalize again
 ```
 
-At any stage, if the authenticator finds unrecognized or corrupted data in storage at boot, it enters `RECOVERY_REQUIRED` (§5.1). An interrupted Reset is not resumed; the user repeats it (§7.12.2).
+At any stage, if the authenticator finds unrecognized or corrupted data in storage at boot, it enters `RECOVERY_REQUIRED` (§5.1). An interrupted Reset is not resumed; the user repeats it (§7.13.2).
 
 ### 4.3 A Normal Signature
 
@@ -261,17 +261,18 @@ Transitions:
 | STOCK_UNBOUND | BindEnterprise succeeds | ENTERPRISE_BOUND | §7.10 |
 | ENTERPRISE_BOUND | Personalize succeeds | PERSONALIZED_NO_PIN, or PIN_READY if a PIN is already set | §7.11 |
 | PERSONALIZED_NO_PIN | setPIN succeeds | PIN_READY | §7.2 |
-| STOCK_UNBOUND | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12 |
-| ENTERPRISE_BOUND / PERSONALIZED_NO_PIN / PIN_READY | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12; binding removed |
+| PIN_READY | UpdateTrustConfig succeeds | PIN_READY | §7.12; configuration replaced, slots, PIN and FIDO credentials kept |
+| STOCK_UNBOUND | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.13 |
+| ENTERPRISE_BOUND / PERSONALIZED_NO_PIN / PIN_READY | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.13; binding removed |
 | Any | Unrecognized or corrupted data found at boot | RECOVERY_REQUIRED | The affected data is retained until Reset |
-| RECOVERY_REQUIRED | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.12; requires a readable attestation identity and reset epoch |
+| RECOVERY_REQUIRED | Reset succeeds | STOCK_UNBOUND (resetEpoch+1) | §7.13; requires a readable attestation identity and reset epoch |
 
 Constraints:
 
 - A binding lasts until the next Reset. Only Reset removes it; there is no other way to rebind an authenticator.
 - Missing data **MUST NOT** be treated as UNUSED or not personalized; if `personalized=1` and the configuration or a slot record is missing, the authenticator MUST treat it as corruption.
-- The PIN and FIDO credentials (§7.13) are independent of the lifecycle: a PIN can be set and FIDO credentials created in any lifecycle state other than RECOVERY_REQUIRED.
-- In `RECOVERY_REQUIRED`, every command except `GetInfo`, status-mode `GetState`, `Cancel` and `Reset` (including ClientPIN) returns `RECOVERY_REQUIRED`. Reset is the user's way out of this state (§7.12).
+- The PIN and FIDO credentials (§7.14) are independent of the lifecycle: a PIN can be set and FIDO credentials created in any lifecycle state other than RECOVERY_REQUIRED.
+- In `RECOVERY_REQUIRED`, every command except `GetInfo`, status-mode `GetState`, `Cancel` and `Reset` (including ClientPIN) returns `RECOVERY_REQUIRED`. Reset is the user's way out of this state (§7.13).
 
 ### 5.2 Slot State
 
@@ -316,7 +317,7 @@ UNUSED ────────────────▶ CREATED ────�
 - A context that is not held is zeroized when another transport sends a command that requires a context or a ClientPIN subcommand other than getPinRetries; that command then proceeds normally.
 - A new `getKeyAgreement` on the same transport first zeroizes the old context and then establishes a new one; during an upload it returns `BUSY` per §5.4.
 - A token MUST be first used to authenticate a command within 19 800 ms of issue (the initial usage time limit; CTAP uses this value for NFC, and VCAP applies it to all transports), or it becomes invalid. After first use it remains valid until the context ends (maximum usage period 600 000 ms), with no idle timeout.
-- **Zeroization events:** transport disconnection, `SELECT` of the FIDO AID over NFC or of the CCID AID over CCID, CCID ICC power-off, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / Reset, and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
+- **Zeroization events:** transport disconnection, `SELECT` of the FIDO AID over NFC or of the CCID AID over CCID, CCID ICC power-off, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / UpdateTrustConfig / Reset, and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
 
 ### 5.4 Upload State
 
@@ -337,7 +338,7 @@ IDLE ──UploadBegin ok──▶ RECEIVING(offset=0) ──UploadChunk(correct
 NORMAL ──Reset (within 10 s of power-up) + 5 s hold──▶ business state deleted, resetEpoch+1 committed ──▶ STOCK_UNBOUND
 ```
 
-Reset defines no intermediate state, and the authenticator keeps no record of a Reset in progress. A Reset that fails or loses power before it returns is repeated by the user; an interrupted Reset never leaves an old slot key usable (§7.12.2).
+Reset defines no intermediate state, and the authenticator keeps no record of a Reset in progress. A Reset that fails or loses power before it returns is repeated by the user; an interrupted Reset never leaves an old slot key usable (§7.13.2).
 
 ---
 
@@ -345,7 +346,7 @@ Reset defines no intermediate state, and the authenticator keeps no record of a 
 
 ### 6.1 Deterministic CBOR
 
-All CBOR of VCAP commands (§7.2–§7.12) and of VCAP data structures MUST satisfy the rules below. Standard CTAP operations (§7.13) and the CTAP parameters of ClientPIN follow the CTAP CBOR encoding rules instead, so that generic clients interoperate.
+All CBOR of VCAP commands (§7.2–§7.13) and of VCAP data structures MUST satisfy the rules below. Standard CTAP operations (§7.14) and the CTAP parameters of ClientPIN follow the CTAP CBOR encoding rules instead, so that generic clients interoperate.
 
 1. Integers and lengths use the shortest definite-length encoding; indefinite-length encoding MUST NOT be used.
 2. A tstr MUST be valid UTF-8.
@@ -417,17 +418,17 @@ Each signed object uses a unique domain separation tag. Verifiers MUST use the p
 
 ### 7.0 Command Table
 
-Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and are used only for commands whose function is the same as the CTAP command. VCAP-specific commands use the CTAP vendor command range `0x40`–`0xBF`, avoiding `0x40` and `0x41`, which CTAP 2.3 keeps for the prototype authenticatorBioEnrollment and authenticatorCredentialManagement commands. The authenticator also implements the standard CTAP authenticator operations (§7.13), so it serves as a FIDO2 security key for WebAuthn.
+Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and are used only for commands whose function is the same as the CTAP command. VCAP-specific commands use the CTAP vendor command range `0x40`–`0xBF`, avoiding `0x40` and `0x41`, which CTAP 2.3 keeps for the prototype authenticatorBioEnrollment and authenticatorCredentialManagement commands. The authenticator also implements the standard CTAP authenticator operations (§7.14), so it serves as a FIDO2 security key for WebAuthn.
 
 | Code | Command | Business parameters (excluding pinUvAuthProtocol / pinUvAuthParam) | Token permission | UP | Result | Context closed on success |
 |---|---|---|---|---|---|---|
-| 0x01 | authenticatorMakeCredential | As CTAP (§7.13) | CTAP `mc` | **Yes** | As CTAP | No |
-| 0x02 | authenticatorGetAssertion | As CTAP (§7.13) | CTAP `ga` | **Yes** | As CTAP | No |
+| 0x01 | authenticatorMakeCredential | As CTAP (§7.14) | CTAP `mc` | **Yes** | As CTAP | No |
+| 0x02 | authenticatorGetAssertion | As CTAP (§7.14) | CTAP `ga` | **Yes** | As CTAP | No |
 | 0x04 | GetInfo | none | None (public) | No | authenticatorGetInfo map (§7.1) | No |
 | 0x06 | ClientPIN | See §7.2 | None (self-authenticating) | No | See §7.2 | No |
 | 0x07 | Reset | none | None; within 10 s of power-up | **Yes (5 s hold)** | Empty | Yes |
-| 0x08 | authenticatorGetNextAssertion | As CTAP (§7.13) | — | No | As CTAP | No |
-| 0x0B | authenticatorSelection | As CTAP (§7.13) | None | **Yes** | As CTAP | No |
+| 0x08 | authenticatorGetNextAssertion | As CTAP (§7.14) | — | No | As CTAP | No |
+| 0x0B | authenticatorSelection | As CTAP (§7.14) | None | **Yes** | As CTAP | No |
 | 0x50 | GetState | Status mode: `{}`; proof mode: `{1:challenge_b32, ?4:groupAid_t44}`; binding mode: `{2:challenge_b32, ?3:1}` | Status and binding modes: none (public); proof mode: READ | No | Status mode: `{1:lifecycle}`; proof mode: StateProof; binding mode: BindingProof | No |
 | 0x51 | CreateIdentity | `{1:slot,2:owner,3:challenge_b32}` | READ+MANAGE | No | StateProof | No |
 | 0x53 | Sign | `{1:slot,2:kind,3:ticket_bstr,4:original_bstr}` | SIGN | **Yes** | Signed | No |
@@ -435,6 +436,7 @@ Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and ar
 | 0x56 | Recover | `{1:slot,2:originalDigest_b32}` | READ | No | Signed (original signature) | No |
 | 0x57 | Cancel | `{}` | None (owning transport only) | No | Empty | Yes |
 | 0x60 | Personalize | `{1:trustConfigEnvelope_bstr}` | None; requires context + enterprise root signature | **Yes** | Empty | Yes |
+| 0x61 | UpdateTrustConfig | `{1:trustConfigEnvelope_bstr}` | MANAGE; requires enterprise root signature | **Yes** | Empty | Yes |
 | 0x63 | BindEnterprise | `{1:tenant_b32,2:enterpriseRoot_b32}` | None; requires context | **Yes** | Empty | Yes |
 | 0x70 | UploadBegin | `{1:slot,2:kind,3:ticket_bstr}` | SIGN | No | Empty | No |
 | 0x71 | UploadChunk | `{1:offset,2:bytes_bstr}` | SIGN | No | Empty | No |
@@ -456,7 +458,7 @@ For each completely reassembled request, the authenticator performs the followin
 4. Decode `command_u8`; an unknown command returns `INVALID_COMMAND`. Decode the parameters per §6.1.
 5. If the command is `GetInfo`, execute §7.1. If the command is status-mode `GetState`, execute §7.4.1. If the command is binding-mode `GetState` (GetState whose parameter map is exactly `{2:challenge_b32}` or `{2:challenge_b32, 3:1}`), execute §7.4.3. If the command is `Cancel`, execute §7.3.
 6. If the authenticator is in `RECOVERY_REQUIRED` and the command is not Reset, return `RECOVERY_REQUIRED`.
-7. If the command is `ClientPIN`, execute §7.2. If the command is a standard CTAP operation, execute it as §7.13 specifies.
+7. If the command is `ClientPIN`, execute §7.2. If the command is a standard CTAP operation, execute it as §7.14 specifies.
 8. If the command requires a token permission, determine the required permission from the command table in §7.0 and execute §8.1. Otherwise (except Reset) a context is required; if absent, return `PUAT_REQUIRED`.
 9. Execute the command.
 10. After the command succeeds, confirm again that the deadlines and permissions are still valid (§8.1 steps 4 and 7); otherwise return the corresponding error.
@@ -476,9 +478,9 @@ GetInfo is [CTAP authenticatorGetInfo][ctap-getinfo]. The request and the encodi
 | 0x08 | maxCredentialIdLength | As the product supports |
 | 0x09 | transports | Exactly the transports implemented: `"usb"` (CTAPHID, §11.2), `"nfc"` (§11.3), `"smart-card"` (CCID, §11.4) |
 | 0x0A | algorithms | Includes ES256 (-7) and EdDSA (-8) for standard operations |
-| 0x0C | forcePINChange | Set by Personalize when the PIN is shorter than TrustConfig `minPinChars` (§7.11) |
+| 0x0C | forcePINChange | Set by Personalize or UpdateTrustConfig when the PIN is shorter than TrustConfig `minPinChars` (§7.11, §7.12) |
 | 0x0D | minPINLength | TrustConfig `minPinChars`; 4 before personalization |
-| 0x18 | longTouchForReset | true: Reset requires a 5-second hold (§7.12) |
+| 0x18 | longTouchForReset | true: Reset requires a 5-second hold (§7.13) |
 
 The VCAP lifecycle is reported by status-mode GetState (§7.4.1), not by GetInfo.
 
@@ -489,8 +491,8 @@ ClientPIN is [CTAP authenticatorClientPIN][ctap-clientpin] with [PIN/UV Auth Pro
 VCAP adds the following rules:
 
 1. **Context.** getKeyAgreement establishes the context of the transport that carries it (§5.3): it zeroizes any existing context of that transport, generates a new P-256 key agreement key pair, and derives `contextId` from it (§6.3). A PIN mismatch zeroizes the context, so the platform calls getKeyAgreement again.
-2. **PIN policy.** The minimum PIN length is TrustConfig `minPinChars`, or 4 before personalization, counted in Unicode code points. Personalize sets forcePINChange when an existing PIN is shorter (§7.11); while it is set, getPinToken and getPinUvAuthTokenUsingPinWithPermissions return `PIN_POLICY_VIOLATION` and changePIN clears it.
-3. **Permissions.** Besides the CTAP permissions, a token can carry the VCAP permissions `READ` (0x0100), `SIGN` (0x0200) and `MANAGE` (0x0400) (§7.0). VCAP permissions are not bound to an RP ID. Permissions are not accumulated: a new token replaces the previous one with exactly the requested permissions. A token from getPinToken carries only the CTAP permissions `mc` and `ga`, as CTAP defines for it, and never a VCAP permission, so it serves generic clients (§7.13) but not VCAP commands, which require getPinUvAuthTokenUsingPinWithPermissions.
+2. **PIN policy.** The minimum PIN length is TrustConfig `minPinChars`, or 4 before personalization, counted in Unicode code points. Personalize and UpdateTrustConfig set forcePINChange when an existing PIN is shorter (§7.11, §7.12); while it is set, getPinToken and getPinUvAuthTokenUsingPinWithPermissions return `PIN_POLICY_VIOLATION` and changePIN clears it.
+3. **Permissions.** Besides the CTAP permissions, a token can carry the VCAP permissions `READ` (0x0100), `SIGN` (0x0200) and `MANAGE` (0x0400) (§7.0). VCAP permissions are not bound to an RP ID. Permissions are not accumulated: a new token replaces the previous one with exactly the requested permissions. A token from getPinToken carries only the CTAP permissions `mc` and `ga`, as CTAP defines for it, and never a VCAP permission, so it serves generic clients (§7.14) but not VCAP commands, which require getPinUvAuthTokenUsingPinWithPermissions.
 4. **Token lifetime.** The token's lifetime follows §5.3 (an initial usage time limit of 19 800 ms on every transport, then valid until the context ends). The token carries no user-presence state, so every UP-requiring command collects a new UP (§8.2).
 5. **Lifecycle.** A successful setPIN in a personalized authenticator moves the lifecycle to PIN_READY (§5.1). In RECOVERY_REQUIRED every subcommand returns `RECOVERY_REQUIRED`.
 6. **Protocol One.** Protocol One exists only so that standard CTAP clients that do not use Protocol Two can set and change the PIN and obtain `mc` / `ga` / `cm` tokens. getPinUvAuthTokenUsingPinWithPermissions under Protocol One that requests READ, SIGN or MANAGE returns `UNAUTHORIZED_PERMISSION`. A token issued under Protocol One authenticates only standard CTAP operations, with pinUvAuthParam verified as CTAP defines for that protocol; VCAP commands accept only Protocol Two (§8.1 step 2).
@@ -542,7 +544,7 @@ The authenticator performs the following steps:
 
 1. Authenticate per §8.1 (READ).
 2. If not personalized, return `INVALID_STATE`.
-3. Read the persistent state of the four slots and the group records; if the state of any slot or group record is missing, corrupted, or not of the current reset epoch and configuration, return `RECOVERY_REQUIRED`.
+3. Read the persistent state of the four slots and the group records; if the state of any slot or group record is missing, corrupted, or not of the current reset epoch, return `RECOVERY_REQUIRED`.
 4. Construct `authState` from the PIN record's `pinRetries`, the power-cycle lockout state, the current token permissions, the remaining initial-usage milliseconds (0 if already used) and the remaining context milliseconds.
 5. Construct `stateBody` (§9.3). When key 4 is present, append the `group` element for `groupAid` (§9.3), or null when no slot holds a group record for it.
 6. Compute `signature = Ed25519(attestation key, "VCAP-STATE\0" ‖ stateBody)`.
@@ -753,43 +755,71 @@ The authenticator performs the following steps:
 1. Require a current context, otherwise `PUAT_REQUIRED`.
 2. If the lifecycle is not ENTERPRISE_BOUND, return `INVALID_STATE`.
 3. Decode the envelope per §9.1; verify `"VCAP-TRUST\0" ‖ body` with the enterpriseRoot in the binding record; on failure return `CONFIG_INVALID`.
-4. Validate body: version 2; device, tenant and resetEpoch match this device; ownerMask, minPinChars, roles and extensions valid per §9.1 (keyIds in increasing byte order, public keys distinct from each other and from the enterprise root key and attestation key, safe public keys, capability bits only in the valid combinations of Appendix B). A device, tenant or resetEpoch mismatch returns `CONFIG_MISMATCH`; any other violation returns `INVALID_PARAMETER`. Because step 3 has already verified the enterprise root signature, `CONFIG_MISMATCH` discloses nothing to a party that cannot sign TrustConfigs.
+4. Validate body: version 1; `sequence` 0 and `prior` null; device, tenant and resetEpoch match this device; ownerMask, minPinChars, roles and extensions valid per §9.1 (keyIds in increasing byte order, public keys distinct from each other and from the enterprise root key and attestation key, safe public keys, capability bits only in the valid combinations of Appendix B). A device, tenant or resetEpoch mismatch returns `CONFIG_MISMATCH`; any other violation returns `INVALID_PARAMETER`. Because step 3 has already verified the enterprise root signature, `CONFIG_MISMATCH` discloses nothing to a party that cannot sign TrustConfigs.
 5. Pre-check persistent storage space; if insufficient, return `NO_SPACE`.
 6. Collect one UP per §8.2.
 7. Confirm that the context is still valid and the transport is still connected.
 8. Atomically commit: personalized=1 in the binding record, TrustConfig, four UNUSED slots, and forcePINChange if a PIN is set and its stored code-point length is below `minPinChars`.
 9. After the write completes, zeroize the context and return empty success.
 
-A configuration is installed once per reset epoch; changing role keys or configuration requires Reset, BindEnterprise and Personalize. An existing PIN and existing FIDO credentials are kept; the lifecycle becomes PIN_READY if a PIN is set and PERSONALIZED_NO_PIN otherwise.
+Personalize installs the first configuration of a reset epoch. Later changes to role keys, capability masks, ownerMask, minPinChars or extensions are installed with UpdateTrustConfig (§7.12), which keeps the slots; changing the enterprise root key requires Reset, BindEnterprise and Personalize. An existing PIN and existing FIDO credentials are kept; the lifecycle becomes PIN_READY if a PIN is set and PERSONALIZED_NO_PIN otherwise.
 
-### 7.12 Reset (0x07)
+### 7.12 UpdateTrustConfig (0x61)
+
+Replaces the installed TrustConfig with its successor signed by the enterprise root key. The PIN, the four slots with their keys, heads, prepared entries, signature counters and group records, the FIDO credentials, the binding record and `resetEpoch` are kept.
+
+**Parameters:** `{1:trustConfigEnvelope_bstr, 254:2, 255:pinUvAuthParam_b32}` (envelope ≤ 1536 bytes). **Required permission:** MANAGE. **UP:** yes. **Result:** empty; the context is closed on success.
+
+The authenticator performs the following steps:
+
+1. Authenticate per §8.1 (MANAGE).
+2. If the lifecycle is not PIN_READY, return `INVALID_STATE`.
+3. Decode the envelope per §9.1; verify `"VCAP-TRUST\0" ‖ body` with the enterpriseRoot in the binding record; on failure return `CONFIG_INVALID`.
+4. Validate body as in §7.11 step 4, except that `sequence` is at least 1 and `prior` is not null (otherwise `INVALID_PARAMETER`). A device, tenant or resetEpoch mismatch returns `CONFIG_MISMATCH`; any other violation returns `INVALID_PARAMETER`.
+5. If `sequence` is not the installed configuration's `sequence` + 1, or `prior` is not the configurationDigest of the installed configuration, return `CONFIG_MISMATCH`.
+6. Pre-check persistent storage space; if insufficient, return `NO_SPACE`.
+7. Collect one UP per §8.2.
+8. Confirm that the context is still valid and the transport is still connected.
+9. Atomically commit the new TrustConfig, and set forcePINChange if the stored PIN's code-point length is below the new `minPinChars`. No other persistent state changes. An implementation that binds slot or group-record state to the installed configuration rebinds that state within the same atomic commit.
+10. After the write completes, zeroize the context and return empty success.
+
+Rules:
+
+- Every command after the commit uses only the new configuration: the configurationDigest of StateProof and BindingProof, `ownerMask` for CreateIdentity, `minPinChars` for ClientPIN and GetInfo, `roles` for Ticket verification (§8.3) and the extensions.
+- A failure or power loss before the commit leaves the previous configuration installed; after it, the new one. No mixture of the two is ever in effect.
+- Because `sequence` increases by exactly one and `prior` names the installed configuration, a configuration that was installed or replaced earlier is never installed again within the reset epoch, and of two different successors of one configuration at most one can be installed. Reset ends the chain; Personalize starts the next reset epoch at `sequence` 0.
+- KeyRef, AIDs and signature counters do not depend on the configuration, so Tickets, archived heads and counters issued before the update stay valid as far as the new configuration allows (§8.3).
+- The enterprise root key is not part of TrustConfig and is not changed; changing it requires Reset.
+- A device in PERSONALIZED_NO_PIN has no PIN and therefore no MANAGE token; IT replaces its configuration by Reset, BindEnterprise and Personalize (§12.7), which loses nothing because no slot is in use.
+
+### 7.13 Reset (0x07)
 
 Deletes employee secrets, removes the enterprise binding and enters a new reset epoch.
 
 **Parameters:** none (command byte only, as in CTAP); no token authentication and no context required. **UP:** yes, a **5-second hold**. **Result:** empty.
 
-Reset has the code, power-up window and UP requirement of [CTAP authenticatorReset][ctap-reset]. It differs in that the attestation identity and the reset epoch counter are kept (§7.12.3) and the touch is held for 5 seconds.
+Reset has the code, power-up window and UP requirement of [CTAP authenticatorReset][ctap-reset]. It differs in that the attestation identity and the reset epoch counter are kept (§7.13.3) and the touch is held for 5 seconds.
 
-#### 7.12.1 Authenticator Processing Steps
+#### 7.13.1 Authenticator Processing Steps
 
 1. If the request carries any byte after the command byte, return `INVALID_LENGTH`.
 2. If more than 10 000 ms have passed since this power-up, return `NOT_ALLOWED`. Power-up is the moment the authenticator is powered: USB attachment, or entry into an NFC field. A CCID ICC power-on is not a power-up.
 3. Reset is available in every lifecycle state. If the attestation identity or `resetEpoch` cannot be read and verified, return `RECOVERY_REQUIRED`: Reset cannot keep data it cannot read. An unreadable binding record, TrustConfig or slot state does not prevent Reset.
 4. Collect one UP per §8.2 with **hold = 5000 ms**; on timeout return `USER_ACTION_TIMEOUT`.
 5. Confirm that the transport is still connected (else `OPERATION_DENIED`).
-6. Delete the PIN record, all state and private keys of the four slots (including pre-rotation historical keys and group records), all FIDO credentials (§7.13), TrustConfig and the binding record (tenant, enterpriseRoot, personalized). In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
+6. Delete the PIN record, all state and private keys of the four slots (including pre-rotation historical keys and group records), all FIDO credentials (§7.14), TrustConfig and the binding record (tenant, enterpriseRoot, personalized). In RECOVERY_REQUIRED this covers every storage area holding these objects, including data that could not be parsed.
 7. Increase `resetEpoch` by 1 and commit it.
 8. Zeroize any existing context and return empty success.
 
 Steps 6 and 7 MAY be performed in either order, and step 6 MAY consist of several separate writes. The authenticator is then in STOCK_UNBOUND; only the attestation identity, `resetEpoch` and data outside VCAP that the manufacturer keeps (for example management credentials) remain.
 
-#### 7.12.2 Failure Semantics
+#### 7.13.2 Failure Semantics
 
 - Any failure before step 6: no persistent change.
 - A failure or power loss during steps 6–7 leaves a state that this document does not define. The authenticator does not resume the Reset at boot, and keeps no record that a Reset was in progress. It MUST ensure only that (a) `resetEpoch` has not decreased, and (b) no slot key or TrustConfig of the old reset epoch can be used afterwards: at the next boot the authenticator is in STOCK_UNBOUND or RECOVERY_REQUIRED. The user repeats Reset, which then completes from either state.
 - If an interrupted Reset had already committed the new `resetEpoch`, the repeated Reset increases it again. The enterprise therefore takes the epoch from a BindingProof (§12.7 step 3) and treats any higher value as a Reset.
 
-#### 7.12.3 Scope of Reset
+#### 7.13.3 Scope of Reset
 
 - Deactivating old AIDs on the network is the enterprise's responsibility (§12.7).
 - Reset applies to all slots and all FIDO credentials together.
@@ -799,7 +829,7 @@ Steps 6 and 7 MAY be performed in either order, and step 6 MAY consist of severa
 - `resetEpoch` never decreases. A later BindEnterprise, to the same or another enterprise, keeps it, so values signed for an earlier epoch (TrustConfig, KeyRef) are never valid again on the same device.
 - To use the authenticator again, the enterprise performs BindEnterprise and Personalize (§12.7).
 
-### 7.13 Standard CTAP Operations
+### 7.14 Standard CTAP Operations
 
 The authenticator is also a FIDO2 authenticator. It implements [authenticatorMakeCredential][ctap-mc] (0x01), [authenticatorGetAssertion][ctap-ga] (0x02), [authenticatorGetNextAssertion][ctap-gna] (0x08) and [authenticatorSelection][ctap-selection] (0x0B) as CTAP 2.3 defines them, together with GetInfo, ClientPIN and Reset above. It MAY implement further CTAP commands, such as authenticatorCredentialManagement (0x0A), as CTAP defines them.
 
@@ -810,7 +840,7 @@ These operations follow CTAP, with the following VCAP rules:
 3. **PIN and tokens.** The employee's single PIN serves both. A token obtained for CTAP permissions (`mc`, `ga`, …) authenticates CTAP operations as CTAP defines; a context whose token carries only CTAP permissions is never held (§5.3).
 4. **User presence.** UP is collected per §8.2, so an NFC tap counts as one UP and a sensor press is required otherwise.
 5. **Attestation.** Attestation for FIDO credentials MUST NOT use the VCAP attestation key, which identifies a single device. It uses batch attestation shared by a large population of devices, or self attestation.
-6. **Reset.** Reset (§7.12) erases all FIDO credentials together with the KERI slots.
+6. **Reset.** Reset (§7.13) erases all FIDO credentials together with the KERI slots.
 7. **Signature counters.** FIDO credentials use their own signature counter. Creating or using a FIDO credential never changes a slot's `signCounter` (§5.2) or any other slot state, so WebAuthn sign-in does not affect the counters on which Tickets are based.
 
 ## 8. Common Authenticator Procedures
@@ -876,9 +906,9 @@ The authenticator performs the following steps:
 
 1. If `len(ticket) > 512`, return `INVALID_LENGTH`.
 2. Decode `[body_bstr, keyId_tstr, signature_b64]` per §6.1.
-3. Look up keyId in TrustConfig `roles`; if not found, return `TICKET_INVALID`.
+3. Look up keyId in the `roles` of the installed TrustConfig; if not found, return `TICKET_INVALID`.
 4. Verify `"VCAP-SIGN\0" ‖ body_bstr` with that role public key; on failure return `TICKET_INVALID`.
-5. Decode `body = [2, kind, signerKeyRef_b32, signCounter, originalDigest_b32, originalLength]`; if the version is not 2, return `INVALID_PARAMETER`.
+5. Decode `body = [1, kind, signerKeyRef_b32, signCounter, originalDigest_b32, originalLength]`; if the version is not 1, return `INVALID_PARAMETER`.
 6. If `body.kind ≠ request kind`, return `TICKET_INVALID`.
 7. Let owner be the slot's owner; if the role's `capabilityMask` does not contain `bit(8·(owner−1) + (kind−1))`, return `TICKET_INVALID` (valid combinations in Appendix B).
 8. If `signCounter ≠ the slot's signature counter + 1` (with overflow check), return `TICKET_INVALID`.
@@ -888,7 +918,7 @@ The authenticator performs the following steps:
 
 The Ticket binds the remaining facts indirectly. KeyRef binds the device, reset epoch, slot, owner and actual signing key. The signature counter binds the Ticket to exactly one signature of that slot. The message digest, the length and the parser bind the AID, seq, said and prior.
 
-The authenticator keeps no record of used Tickets: the signature counter makes every Ticket single-use, since a committed signature advances the counter and invalidates every Ticket issued for the same or an earlier value. A Ticket is independent of the context, so it remains usable across disconnection, PIN errors and new contexts until the slot's next signature. It carries no time limit (§13.2).
+The authenticator keeps no record of used Tickets: the signature counter makes every Ticket single-use, since a committed signature advances the counter and invalidates every Ticket issued for the same or an earlier value. A Ticket is independent of the context, so it remains usable across disconnection, PIN errors and new contexts until the slot's next signature. It carries no time limit (§13.2). It is checked against the TrustConfig installed when it is used, so an UpdateTrustConfig that removes its role, changes the role's public key or withdraws its capability bit invalidates it, and one that keeps them does not (§7.12).
 
 ### 8.4 Key Event Checks
 
@@ -996,13 +1026,14 @@ The signature is a 64-byte Ed25519 signature over the message, verifiable under 
 |---|---|
 | BindEnterprise | Binding record |
 | Personalize | Binding record, TrustConfig, four UNUSED slots |
+| UpdateTrustConfig | TrustConfig and forcePINChange; PIN record, slots, group records and FIDO credentials unchanged (§7.12 step 9) |
 | CreateIdentity | The slot's keys and state |
 | PrepareRotation | The slot's prepared entry (latest unchanged) |
 | Sign ICP / IXN | The slot's latest (= this event, including the original signature), signature counter and lastSigned |
 | Sign ROT | The slot's keys (current←old.next, next←newNext), latest, signature counter and lastSigned; prepared deleted |
 | Sign EXN / RPY / GROUP_EXN | The slot's signature counter and lastSigned |
 | Sign GROUP / GROUP_SUPERSEDE | The slot's group record for `i` (created, reused per §8.4.4 item 6, or `t`, seq, said, prior, originalLength, originalDigest, original signature, actualPublic and signCounter replaced; `replaced` cleared for GROUP, set and supersedeCount incremented for GROUP_SUPERSEDE), signature counter and lastSigned, all in the slot's own persistent state |
-| Reset | Not one atomic commit: removal of business state and the new reset epoch, in separate writes; an interrupted Reset is repeated (§7.12.2) |
+| Reset | Not one atomic commit: removal of business state and the new reset epoch, in separate writes; an interrupted Reset is repeated (§7.13.2) |
 | GetState, Recover | No business write |
 
 Rules:
@@ -1029,14 +1060,15 @@ The persistent KEL head and prepared key are kept.
 
 ## 9. Data Structures
 
-The leading integer of the TrustConfig body, the Ticket body and stateBody is a structure version. Its value 2 is independent of the version of this document.
+The leading integer of the TrustConfig body, the Ticket body, stateBody and bindingBody is a structure version. Its value 1 is independent of the version of this document; other values are assigned per Appendix F item 3.
 
 ### 9.1 TrustConfig
 
 ```
 envelope = [body_bstr, rootSignature_b64]                  ; ≤ 1536 bytes
            ; rootSignature = Ed25519(enterpriseRoot, "VCAP-TRUST\0" ‖ body)
-body     = [2, device_b32, tenant_b32, resetEpoch,
+body     = [1, device_b32, tenant_b32, resetEpoch,
+            sequence, prior_b32 / null,
             ownerMask, minPinChars, roles, extensions]
 role     = [keyId_tstr, capabilityMask, public_b32]
 extensions = [* bstr32]
@@ -1044,19 +1076,21 @@ extensions = [* bstr32]
 
 | Field | Constraint |
 |---|---|
-| ownerMask | Only bit0 (CLIENT) / bit1 (WORK); non-zero |
+| sequence | 0..2^32−1. 0 for the configuration installed by Personalize; the installed value + 1 for a configuration installed by UpdateTrustConfig |
+| prior | null when `sequence` is 0; otherwise the configurationDigest (§6.3) of the configuration this one replaces |
+| ownerMask | Only bit0 (CLIENT) / bit1 (WORK); non-zero. Governs CreateIdentity only; slots that exist keep their owner when an update removes it |
 | minPinChars | 4..63 (an enterprise MAY choose 8 or more) |
 | roles | 1..8 entries; keyId is 1..16 bytes of UTF-8, in strictly increasing byte order |
 | role.public | Distinct from each other and from the enterprise root key and attestation key; safe public key (§3.1) |
 | capabilityMask | Unsigned integer 0..2^16−1; only the valid bits of Appendix B; non-zero |
-| extensions | 0..4 entries of 32 bytes each, in strictly increasing byte order. This document assigns them no meaning; an enterprise that uses none issues the empty array |
+| extensions | 0..4 entries of 32 bytes each, in strictly increasing byte order. This document assigns them no meaning; an enterprise that uses none issues the empty array. A product MAY define a meaning for entries, for its own functions outside the VCAP commands; such a meaning MUST NOT change the outcome of any VCAP command, and an entry the product does not recognize has no effect. Extensions are signed, bound to the device and reset epoch, and replaced by UpdateTrustConfig, like every other field |
 
 ### 9.2 Ticket
 
 ```
 ticket = [body_bstr, keyId_tstr, signature_b64]            ; ≤ 512 bytes
          ; signature = Ed25519(role.public, "VCAP-SIGN\0" ‖ body)
-body   = [2, kind, signerKeyRef_b32, signCounter,
+body   = [1, kind, signerKeyRef_b32, signCounter,
           originalDigest_b32, originalLength]
 ```
 
@@ -1075,7 +1109,7 @@ The enterprise learns the slot's current signature counter from the last archive
 ```
 StateProof = {1:stateBody_bstr, 2:signature_b64}
              ; signature = Ed25519(attestation key, "VCAP-STATE\0" ‖ stateBody)
-stateBody  = [2, device_b32, resetEpoch, configurationDigest_b32,
+stateBody  = [1, device_b32, resetEpoch, configurationDigest_b32,
               challenge_b32, authState, slots, ? group]                ; ≤ 1536 bytes
 authState  = [pinRetries, powerCycleState(0/1), permissions, initialUsageRemainingMs, contextRemainingMs]
 slots      = [slot0, slot1, slot2, slot3]
@@ -1115,7 +1149,7 @@ Sign, UploadEnd and Recover use this same structure; `signCounter` is the slot's
 ```
 BindingProof = {1:bindingBody_bstr, 2:signature_b64, ?3:attestationChain}
                ; signature = Ed25519(attestation key, "VCAP-BINDING\0" ‖ bindingBody)
-bindingBody  = [2, device_b32, lifecycle, challenge_b32, binding / null]   ; ≤ 256 bytes
+bindingBody  = [1, device_b32, lifecycle, challenge_b32, binding / null]   ; ≤ 256 bytes
 binding      = [tenant_b32, enterpriseRootDigest_b32, resetEpoch, configurationDigest_b32 / null]
 ```
 
@@ -1131,7 +1165,7 @@ binding      = [tenant_b32, enterpriseRootDigest_b32, resetEpoch, configurationD
 
 ### 10.1 Status Code Table
 
-Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0–0xF8. ClientPIN (§7.2) and the standard CTAP operations (§7.13) return status codes as CTAP defines them. The table lists the codes that VCAP commands return, with the platform action for each; VCAP commands MUST NOT return other codes. A platform receiving an unlisted code SHOULD report a protocol error and MUST NOT interpret it as a PIN error or as safe to retry. An error response is a single status byte with no map.
+Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0–0xF8. ClientPIN (§7.2) and the standard CTAP operations (§7.14) return status codes as CTAP defines them. The table lists the codes that VCAP commands return, with the platform action for each; VCAP commands MUST NOT return other codes. A platform receiving an unlisted code SHOULD report a protocol error and MUST NOT interpret it as a PIN error or as safe to retry. An error response is a single status byte with no map.
 
 | Code | Name | Meaning | Platform action |
 |---|---|---|---|
@@ -1151,14 +1185,14 @@ Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0�
 | 0x38 | PIN_TOKEN_EXPIRED | Token or context deadline passed | Authorize again |
 | 0x7f | INTERNAL | RNG, cryptographic engine or invariant failure | Stop and report |
 | 0xf0 | INVALID_STATE | Lifecycle, slot or operation conditions not met | Query actual state with GetState |
-| 0xf1 | CONFIG_INVALID | TrustConfig envelope does not verify under the bound enterprise root (§7.11 step 3) | Check that the TrustConfig was signed by this tenant's enterprise root key |
+| 0xf1 | CONFIG_INVALID | TrustConfig envelope does not verify under the bound enterprise root (§7.11 step 3, §7.12 step 3) | Check that the TrustConfig was signed by this tenant's enterprise root key |
 | 0xf2 | NOT_FOUND | The slot has no latest event, or required data does not exist | Query actual state |
 | 0xf3 | INVALID_KERI_EVENT | Message parsing or local KEL rules not satisfied | Check the message; for a KEL signature the head may be outdated: establish a new context, GetState, then request a new Ticket |
 | 0xf4 | KEY_BINDING | Actual key, pre-rotation commitment or AID mismatch; for group member signing also a group AID recorded on another slot, or a group event or GROUP_EXN whose `i` is a slot AID | Check the message; establish a new context, check the keys with GetState, then request a new Ticket |
 | 0xf5 | TICKET_INVALID | Ticket signature / binding / signature counter mismatch | Request a new Ticket, or query actual state |
-| 0xf6 | RECOVERY_REQUIRED | Storage contains unrecognized or corrupted data | Reset (§7.12); offline maintenance if Reset also returns RECOVERY_REQUIRED |
+| 0xf6 | RECOVERY_REQUIRED | Storage contains unrecognized or corrupted data | Reset (§7.13); offline maintenance if Reset also returns RECOVERY_REQUIRED |
 | 0xf7 | UPLOAD_INVALID | Upload progress, final length / digest or phase error | Start over (new context) |
-| 0xf8 | CONFIG_MISMATCH | TrustConfig verifies, but its device, tenant or reset epoch differs from this device (§7.11 step 4) | Read the actual values with binding-mode GetState (§7.4.3) and issue a TrustConfig for them; do not guess |
+| 0xf8 | CONFIG_MISMATCH | TrustConfig verifies, but its device, tenant or reset epoch differs from this device (§7.11 step 4, §7.12 step 4), or for UpdateTrustConfig it is not the successor of the installed configuration (§7.12 step 5) | Personalize: read the actual values with binding-mode GetState (§7.4.3) and issue a TrustConfig for them. UpdateTrustConfig: read the installed configurationDigest with GetState (§7.4.2) and obtain the successor of that configuration. Do not guess |
 
 Codes below 0xF0 are CTAP status codes with their CTAP meaning (BUSY is CTAP1_ERR_CHANNEL_BUSY, NO_SPACE is CTAP2_ERR_KEY_STORE_FULL and INTERNAL is CTAP1_ERR_OTHER). Codes 0xF0–0xF8 are VCAP-specific codes in the CTAP vendor range.
 
@@ -1167,7 +1201,7 @@ Codes below 0xF0 are CTAP status codes with their CTAP meaning (BUSY is CTAP1_ER
 Except for `BUSY` and the `USER_ACTION_TIMEOUT` of Sign / UploadEnd described below, an error MUST zeroize the whole context (§8.8) when any of the following holds:
 
 1. An upload is in progress when the error occurs; or
-2. The command is one of CreateIdentity, Sign, PrepareRotation, Personalize, BindEnterprise, Reset, UploadBegin / Chunk / End; or
+2. The command is one of CreateIdentity, Sign, PrepareRotation, Personalize, UpdateTrustConfig, BindEnterprise, Reset, UploadBegin / Chunk / End; or
 3. The status code is one of PIN_AUTH_INVALID, PIN_TOKEN_EXPIRED, INTERNAL, RECOVERY_REQUIRED, TICKET_INVALID, CONFIG_INVALID, KEEPALIVE_CANCEL.
 
 When Sign or UploadEnd returns USER_ACTION_TIMEOUT, the authenticator clears the signing state, parser and upload state and keeps the context and token (§8.2). Other errors (for example `INVALID_PARAMETER` from GetState) keep the context. `BUSY` always keeps the current upload and context.
@@ -1217,7 +1251,7 @@ VCAP uses the [NFC binding of CTAP 2.3][ctap-nfc] unchanged, including the FIDO 
 - **Field session.** A field session begins when the authenticator is powered by the reader's field and ends when it leaves the field. The field session is one transport. `SELECT` of the FIDO AID and leaving the field both zeroize the context.
 - **Tap as UP.** Entering the field counts as one user action. The first UP-requiring request in the field session consumes it (§8.2 step 1); later UP-requiring requests in the same session wait for a sensor press. Reset never accepts the tap.
 - **Cancellation.** The platform cancels by ending the field session. A Cancel command (§7.3) between two commands remains available.
-- **Leaving the field during a command.** The command ends with power loss and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new field session; an interrupted Reset is repeated in a new field session (§7.12.2).
+- **Leaving the field during a command.** The command ends with power loss and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new field session; an interrupted Reset is repeated in a new field session (§7.13.2).
 
 ### 11.4 USB CCID
 
@@ -1229,7 +1263,7 @@ The following rules relate it to VCAP:
 - **UP.** A card session provides no tap: every UP-requiring request waits for a sensor press (§8.2), and the authenticator reports `STATUS_UPNEEDED` in response to status polling while it waits.
 - **Cancellation.** The platform cancels a UP wait by ending the card session. A Cancel command (§7.3) between two commands remains available.
 - **Ending the card session during a command.** The command ends and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new card session.
-- **Reset window.** The 10-second window of §7.12.1 step 2 runs from USB attachment; an ICC power-on does not reopen it.
+- **Reset window.** The 10-second window of §7.13.1 step 2 runs from USB attachment; an ICC power-on does not reopen it.
 - **Coexistence.** An authenticator that presents both a CTAPHID interface and a CCID interface treats each CTAPHID channel and the card session as separate transports, and applies §5.3 between them.
 - **ATR.** The answer-to-reset is product-defined; platforms identify the authenticator by a successful `SELECT` of the CCID AID followed by GetInfo `versions` containing `"VCAP_1_0"`.
 
@@ -1332,8 +1366,8 @@ The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step
 ### 12.7 Reset and Re-enrollment
 
 1. The enterprise decides on a Reset (departure, lost device, blocked PIN, etc.) and, on the enterprise side, deactivates the old CLIENT / WORK AIDs and stops issuing Tickets for the old reset epoch. Reset also erases the employee's FIDO credentials, so relying parties that registered them need re-registration.
-2. Reinsert (USB) or re-tap (NFC) the authenticator and send Reset within 10 s of power-up (§7.12.1 step 2); the user holds the touch for 5 seconds. No PIN is needed, so Reset also works after the PIN is blocked. Generic FIDO clients (browser or operating system settings) can also send Reset and prompt only for a touch; enterprise guidance SHOULD tell users that Reset requires a 5-second hold and erases all identities on the authenticator.
-3. On success the authenticator is in STOCK_UNBOUND with a higher resetEpoch (normally resetEpoch+1; more if an earlier Reset was interrupted, §7.12.2). IT enrolls it again per §12.5 steps 2–3: BindEnterprise, then Personalize with a TrustConfig for the reported resetEpoch. The attestation identity and its certificate are unchanged, so the enterprise can verify the BindingProof with the key it already registered. The employee then sets a PIN and onboards again. IT MUST take the reset epoch from a verified BindingProof, never from its own count of Resets.
+2. Reinsert (USB) or re-tap (NFC) the authenticator and send Reset within 10 s of power-up (§7.13.1 step 2); the user holds the touch for 5 seconds. No PIN is needed, so Reset also works after the PIN is blocked. Generic FIDO clients (browser or operating system settings) can also send Reset and prompt only for a touch; enterprise guidance SHOULD tell users that Reset requires a 5-second hold and erases all identities on the authenticator.
+3. On success the authenticator is in STOCK_UNBOUND with a higher resetEpoch (normally resetEpoch+1; more if an earlier Reset was interrupted, §7.13.2). IT enrolls it again per §12.5 steps 2–3: BindEnterprise, then Personalize with a TrustConfig for the reported resetEpoch. The attestation identity and its certificate are unchanged, so the enterprise can verify the BindingProof with the key it already registered. The employee then sets a PIN and onboards again. IT MUST take the reset epoch from a verified BindingProof, never from its own count of Resets.
 4. The authenticator SHOULD stay connected during Reset. If Reset is interrupted, the platform reports it and the user repeats steps 2–3; the authenticator does not complete it on its own.
 
 A Reset ends the continuity of every AID on the authenticator in the same way as loss of the device; VAF §6.5 specifies the resulting enterprise and credential obligations.
@@ -1378,6 +1412,24 @@ These procedures apply to an authenticator that implements group member signing.
 8. **Abandoned proposal.** When a group event does not reach its threshold and the members agree on a different event at the same sequence number, a member whose group record holds the abandoned event signs the replacement with GROUP_SUPERSEDE (kind 7), under a Ticket the enterprise issues per §12.8 item 7.5. A member whose record does not hold that sequence number signs the replacement with GROUP. When the group's witnesses have accepted a different event at a sequence number without this member's signature, a member whose record holds another event at that sequence number signs the accepted event the same way before it can sign the next event (§8.4.4 item 5). If that record's `replaced` is already set, because the member signed a replacement at that sequence number that the witnesses did not accept either, it cannot sign the accepted event and can next sign only an event at least two sequence numbers above its record; this needs three different events at one sequence number. An abandoned `icp` names a different group AID than its replacement and therefore needs no replacement signature; when all of a slot's group records are in use, a later group `icp` reuses the record of an abandoned inception under GROUP_SUPERSEDE (§8.4.4 item 6), and otherwise the record remains until Reset.
 9. **Recovery.** A lost response is reconciled per §12.3 (group signatures).
 
+### 12.10 TrustConfig Update
+
+**Platform.**
+
+1. Obtain from the enterprise the successor of the configuration the authenticator reports (VCAP-EI §7.20). Tell the user that the enterprise configuration of the authenticator will change and that the identities on it are kept.
+2. Establish a context with a token that includes MANAGE (§12.1) and call UpdateTrustConfig; the user touches once.
+3. Whatever the status code, determine the installed configuration only from the configurationDigest of a new StateProof (§10.3), and report that StateProof to the enterprise. Repeat from step 1 while the enterprise has a further successor.
+4. If forcePINChange is set afterwards, ask the user to change the PIN (§7.2).
+
+**Enterprise.** The enterprise MUST:
+
+1. keep, per device and reset epoch, the chain of every configuration it has signed, each successor with `sequence` = predecessor + 1 and `prior` = H(predecessor envelope); once it has signed a successor of a configuration, never sign a different successor of the same configuration, since either could then be installed, and to change course sign a successor of that successor;
+2. treat as installed the configuration shown by the latest StateProof or BindingProof it has verified, and until a proof shows a later one, treat the device as possibly holding any configuration of the chain from the last one confirmed to the last one signed;
+3. while more than one configuration is possible, issue a Ticket only under a role key whose keyId, public key and capability bit for the request are the same in every possible configuration, and otherwise require a StateProof first (§12.8 item 1);
+4. treat a role key or capability withdrawn by an update as still installed until a proof shows the update installed, and meanwhile stop issuing Tickets under it (§12.8) as for any revoked authority.
+
+The update keeps KeyRef, AIDs and signature counters, so the archived heads and counters of §12.8 item 1 remain the state basis.
+
 ---
 
 ## 13. Security Considerations
@@ -1399,15 +1451,16 @@ These procedures apply to an authenticator that implements group member signing.
 ### 13.2 Remaining Risks
 
 1. **Induced signing:** UP confirms presence only, so the authenticator cannot tell whether the user was induced to sign a well-formed but malicious message. Independent enterprise approval of the message, recipients, attachments, route, receiving domain and deadline is required.
-2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY carry their own validity (`dt`) that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, or Resets the authenticator. An enterprise window for unused Tickets (VCAP-EI §9.3 item 2) limits when the enterprise hands out a Ticket and dispatches the resulting message; it does not limit archiving (§12.8 item 8).
+2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY carry their own validity (`dt`) that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, has an UpdateTrustConfig installed that removes the Ticket's role or capability (§7.12), or Resets the authenticator. An enterprise window for unused Tickets (VCAP-EI §9.3 item 2) limits when the enterprise hands out a Ticket and dispatches the resulting message; it does not limit archiving (§12.8 item 8).
 3. **NFC tap as UP:** over NFC the tap satisfies UP for one request per field session. A compromised platform that holds a valid PIN token and Ticket can use the user's next tap for its own request, just as it can use a sensor press; a tap also happens when the authenticator is left on a reader. Enterprise approval of the message content remains the control.
-4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.13), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
+4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.14), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
 5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8).
 6. **Web pages:** this document defines no route by which a web page reaches the VCAP operations. An enterprise web application works through a platform client that implements this document, so the PIN, the context and the Outbox stay on the platform (§12.1, §12.2).
 7. **Reset by generic FIDO clients:** browser and operating-system settings can send Reset, which erases every identity on the authenticator after a 5-second hold. This follows from CTAP compatibility. Enterprises SHOULD tell users what Reset erases (§12.7 step 2). Such a Reset also removes the enterprise binding: afterwards any party can bind the authenticator to its own enterprise, as with a factory-new one, so the binding does not prevent reuse of a lost or stolen authenticator. It leaves no enterprise record; the enterprise detects it from the next BindingProof (§7.4.3, §12.7).
 8. **Group records:** group records are released only by Reset, or for an abandoned inception by reuse under GROUP_SUPERSEDE (§8.4.4 item 6), so a slot takes part in at most `GROUP_RECORDS` group AIDs at a time; enterprises SHOULD approve a member signature on a group `icp` only after all members have agreed on its bytes. Because a slot signs only at increasing sequence numbers of a group, one signature on an event far ahead of the group's accepted state, approved in error or by a compromised role key, keeps the slot from signing the group's lower sequence numbers until Reset; §12.8 item 7.2 therefore approves only `s` = accepted sequence + 1. Each record needs a Ticket, so only the enterprise can consume them. GROUP_SUPERSEDE lets a member sign a second event, and never a third, at a sequence number it has already signed; an attacker who holds a role key with bit 14, a PIN token and a user touch can thereby add this member's signature to a competing event. The enterprise confines bit 14 to a separately controlled role key (§12.8 item 7.5) and audits `supersedeCount`.
 9. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch, and the attestation certificate chain, which also names the manufacturer and anything the manufacturer puts in the certificates. Manufacturers SHOULD NOT place per-customer data in attestation certificates. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands. After a Reset the device is in STOCK_UNBOUND and discloses only the device identifier and the certificate chain.
-10. **Residual data after Reset:** Reset deletes secrets logically and does not overwrite or erase the storage medium (§7.12.3), and ROT does not destroy pre-rotation keys (§8.7 rule 6). An attacker able to read the raw non-volatile storage of the authenticator, outside its interfaces, may therefore recover private keys and the PIN check value of earlier reset epochs. VCAP relies on the authenticator's secure storage for this. Keys recovered this way still need a Ticket to be used through an authenticator, but can sign outside one, so an enterprise MUST deactivate the AIDs of a lost or reset authenticator (§12.7 step 1) and not rely on Reset alone.
+10. **Residual data after Reset:** Reset deletes secrets logically and does not overwrite or erase the storage medium (§7.13.3), and ROT does not destroy pre-rotation keys (§8.7 rule 6). An attacker able to read the raw non-volatile storage of the authenticator, outside its interfaces, may therefore recover private keys and the PIN check value of earlier reset epochs. VCAP relies on the authenticator's secure storage for this. Keys recovered this way still need a Ticket to be used through an authenticator, but can sign outside one, so an enterprise MUST deactivate the AIDs of a lost or reset authenticator (§12.7 step 1) and not rely on Reset alone.
+11. **Configuration update:** UpdateTrustConfig requires the enterprise root signature, a MANAGE token and a touch. A party holding the enterprise root key can therefore install role keys of its choice on a device whose holder enters the PIN and touches; this is the reach the root key already has at Personalize, and every signature under such a role still needs a Ticket, a SIGN token and a touch. Withdrawing a role by update takes effect only when the holder installs it (§12.10), so the enterprise's refusal to issue Tickets remains the immediate control. The enterprise root key SHOULD be kept offline.
 
 ### 13.3 PIN
 
@@ -1446,6 +1499,7 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | GROUP_RECORDS | 2 per slot (group member signing only) |
 | TrustConfig roles | 1..8; keyId 1..16 bytes |
 | TrustConfig extensions | 0..4 entries of 32 bytes |
+| TrustConfig sequence | 0..2^32−1 |
 | Slot signature counter | 0..2^32−1 |
 | CBOR depth / item count | ≤ 16 / ≤ 1024 |
 | VCAP permission bits | READ=0x0100, SIGN=0x0200, MANAGE=0x0400 |
@@ -1625,24 +1679,24 @@ Every private input is `seed(label) = SHA-256("vcap-tv:" ‖ label)`, with the l
 
 ### E.3 TrustConfig
 
-body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], []]
+body = [1, device, tenant, 0, sequence 0, prior null, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, rolePublic]], []]
 
 - **body:**
 
   ```
-  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca80
+  8a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050000f603068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca80
   ```
 - **rootSignature:**
 
   ```
-  4a20b8668d41db51beef20810e6732462b98e478c182157e7d6405938a468067a66cf8621037fa3633f166ec5f8af5b21273bc1cd646fb2c32069a7c33117203
+  2b1c7493f94a92d34caa20ef2c070d27b356491394a0822bfc07fbc2091e03e7defde2f039dc0032d7fc6b498979b464c658c347a747dc30fbf19abb8f4e1401
   ```
 - **envelope:**
 
   ```
-  82587588025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca8058404a20b8668d41db51beef20810e6732462b98e478c182157e7d6405938a468067a66cf8621037fa3633f166ec5f8af5b21273bc1cd646fb2c32069a7c33117203
+  8258778a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050000f603068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca8058402b1c7493f94a92d34caa20ef2c070d27b356491394a0822bfc07fbc2091e03e7defde2f039dc0032d7fc6b498979b464c658c347a747dc30fbf19abb8f4e1401
   ```
-- **configurationDigest:** `c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e`
+- **configurationDigest:** `3cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b41901`
 
 ### E.4 KERI events
 
@@ -1670,38 +1724,38 @@ body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0x1F03, ro
 - **ICP Ticket body:**
 
   ```
-  86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b
+  86010158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b
   ```
 - **ICP Ticket signature:**
 
   ```
-  24522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de5704
+  2f49445d8a8077191f4f14b406d1a41d5f7af5de537cfc5b94264fae356a2e775727745245aa4e2c578240baa4a32e8bf01a442237744e02114d0f00b0b5940a
   ```
 - **ICP Ticket envelope:**
 
   ```
-  83584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de5704
+  83584b86010158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f707358402f49445d8a8077191f4f14b406d1a41d5f7af5de537cfc5b94264fae356a2e775727745245aa4e2c578240baa4a32e8bf01a442237744e02114d0f00b0b5940a
   ```
-- **ICP ticketId (VCAP-EI):** `27bf2fb71f91ae4a5420cfadd0963700`
+- **ICP ticketId (VCAP-EI):** `b27f76ec30ad2b910d00fedc37a1d071`
 - **IXN Ticket envelope (signCounter 2):**
 
   ```
-  83584a86020258207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4025820a84fb3d3a24cfab8f5e9c833ef00823b4887a2cdbaf2a21ff0098787c6fc73ab18cb636f707358400409c70e3bc3e1a977c8a18194426d55d068f3b00f608cde1bbb616cce51eccc82b01e3e0e4706a764443ce2158f73eb347066dcc575cc6bbdd0b44e5d9c2007
+  83584a86010258207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4025820a84fb3d3a24cfab8f5e9c833ef00823b4887a2cdbaf2a21ff0098787c6fc73ab18cb636f707358408ad39950cf9f97ee8bf82bdcbc28aadd51d83aebb348b5b499b72e0ff7b546728018d06a761063c68f852f1744d6f18aeb9493b40e11c2f44fc6652676a0180e
   ```
 
 ### E.6 Sign request (ICP, inline)
 
-- **H(CBOR(P)):** `87e852948abb059d3ec4a62f349918f226ac3a240550ceb5d23c7e5026eca50e`
+- **H(CBOR(P)):** `b68908362e950c5379409bb191e9c2d0c7889febcb9360e031a5f12a1421f73f`
 - **auth message:**
 
   ```
-  564341502d434d440076495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee5387e852948abb059d3ec4a62f349918f226ac3a240550ceb5d23c7e5026eca50e
+  564341502d434d440076495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee53b68908362e950c5379409bb191e9c2d0c7889febcb9360e031a5f12a1421f73f
   ```
-- **pinUvAuthParam:** `4a45bf36c1082563634455a4a762abbe3346b259a66461097301e147ceefb67f`
+- **pinUvAuthParam:** `718151b211494e0257418b8abc26f5826f1918695022939c695df70f8ec8b2a2`
 - **request (command byte + CBOR):**
 
   ```
-  53a60100020103589483584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc0138387210dd7f29c295104f13f8cb6e3503b2d4063a543a68082361a73ff7de57040459012b7b2276223a224b45524931304a534f4e3030303132625f222c2274223a22696370222c2264223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2269223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2273223a2230222c226b74223a2231222c226b223a5b22444770686e316f42324731576d354e6f45507855646c4f4c565164745f4f5f36426d7367633569306d346b56225d2c226e74223a2231222c226e223a5b224543653377517a3855544f46716136644e6e776263396d5164496d75644b78685f5a41396d61595f7057304d225d2c226274223a2230222c2262223a5b5d2c2263223a5b5d2c2261223a5b5d7d18fe0218ff58204a45bf36c1082563634455a4a762abbe3346b259a66461097301e147ceefb67f
+  53a60100020103589483584b86010158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f707358402f49445d8a8077191f4f14b406d1a41d5f7af5de537cfc5b94264fae356a2e775727745245aa4e2c578240baa4a32e8bf01a442237744e02114d0f00b0b5940a0459012b7b2276223a224b45524931304a534f4e3030303132625f222c2274223a22696370222c2264223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2269223a224542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32222c2273223a2230222c226b74223a2231222c226b223a5b22444770686e316f42324731576d354e6f45507855646c4f4c565164745f4f5f36426d7367633569306d346b56225d2c226e74223a2231222c226e223a5b224543653377517a3855544f46716136644e6e776263396d5164496d75644b78685f5a41396d61595f7057304d225d2c226274223a2230222c2262223a5b5d2c2263223a5b5d2c2261223a5b5d7d18fe0218ff5820718151b211494e0257418b8abc26f5826f1918695022939c695df70f8ec8b2a2
   ```
 - **request length:** `499`
 
@@ -1732,17 +1786,17 @@ slot 0 ACTIVE WORK after the ICP; authState [8, 0, READ|SIGN, 0, 590000]
 - **stateBody:**
 
   ```
-  87025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600
+  87015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600
   ```
 - **signature:**
 
   ```
-  4d0d843c9e24c8830d71dae0e105faf5a568ff1763d4295552cc6a0dd1b536045d07111b5c577807549027fde4b5210d8fbc83904c8b92a357c7eaf6b4e0430c
+  129ecbedcf64dddbf8fa0e0441ebda06b6b661d27237460a3da34ae04fb2ee3ef53af5bd98bf1009541d33e3545dbea72f08c92fcb6f47b1c3ff14870fb5e60d
   ```
 - **StateProof:**
 
   ```
-  a20159016287025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e58205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6000258404d0d843c9e24c8830d71dae0e105faf5a568ff1763d4295552cc6a0dd1b536045d07111b5c577807549027fde4b5210d8fbc83904c8b92a357c7eaf6b4e0430c
+  a20159016287015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f600025840129ecbedcf64dddbf8fa0e0441ebda06b6b661d27237460a3da34ae04fb2ee3ef53af5bd98bf1009541d33e3545dbea72f08c92fcb6f47b1c3ff14870fb5e60d
   ```
 
 ### E.9 Negative Cases
@@ -1752,7 +1806,7 @@ An authenticator rejects each of the following. The Ticket uses the body of E.5;
 - **Ticket signature with S + L (§6.4 rule 1: reject):**
 
   ```
-  83584b86020158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f7073584024522a9a233f4803d1c1aa2a9115e1be4bb4938d04cfd3a0a686405b1fdc01382546063a9a8cd4ede6eb0a9baa681418b2d4063a543a68082361a73ff7de5714
+  83584b86010158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f707358402f49445d8a8077191f4f14b406d1a41d5f7af5de537cfc5b94264fae356a2e7744fb69af5f0d61842d1f385d839d0da0f01a442237744e02114d0f00b0b5941a
   ```
 - **icp with a space after ':' (§8.4.3 item 1):**
 
@@ -1783,7 +1837,10 @@ An authenticator rejects each of the following. The Ticket uses the body of E.5;
 | Negative case | Input | Status |
 |---|---|---|
 | GetState keys 1 and 2 | `50a20158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c0258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` | `0x02` |
-| Personalize epoch mismatch | `82587588025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050103068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca80584098dc5c715fb8e27b82069eb013c329835ebae0789c08216c4bc80f28b2392d558c90280c93f3ec7a79cdd22cbcdf5087a27b967fb9e5647085d7e63d7fb59e0f` | `0xf8` |
+| Personalize epoch mismatch | `8258778a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050100f603068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca8058404d436e8330484767b6619f68249a5709e79afe6c524ff62d37d0ebcdfa615ea186e97f0e6d5b54a76e32dda3162dcac9aec8963e829b1491a9bf9a147c55f403` | `0xf8` |
+| UpdateTrustConfig with the installed E.3 envelope (sequence not increased) | `8258778a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050000f603068183636f7073191f0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca8058402b1c7493f94a92d34caa20ef2c070d27b356491394a0822bfc07fbc2091e03e7defde2f039dc0032d7fc6b498979b464c658c347a747dc30fbf19abb8f4e1401` | `0xf8` |
+| UpdateTrustConfig whose prior is not the installed configurationDigest | `8258988a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970500015820e1517c61727f15a8205e65ba96d62099e73b810d27ab6597ec9c5352086d00fe03068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca8058409ed1a5276aa2d6488f092acd789871f8366023778799b9ef0afea1cd64ba9f0f0a686af2cf099ef163e3d677056b4553d0c229eaafd5555c5a16e190ff989103` | `0xf8` |
+| Personalize with the E.12 successor (sequence 1) | `8258988a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705000158203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190103068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca805840a977182de99b27c08a8ddc8c270025b0f190cf630f6b0845f5b7061d37d576a3572210a2283b7b2e97b6dac6c8da8187fc612e202d5791655afc2346d76fba0f` | `0x02` |
 
 ### E.10 Binding mode
 
@@ -1799,22 +1856,22 @@ Uses the existing E.0 inputs and challenge. The ENTERPRISE_BOUND vector uses res
 - **bindingBody:**
 
   ```
-  85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834cf6
+  85015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834cf6
   ```
 - **signature:**
 
   ```
-  031699b39400d9027b249c707f4b72186d03b12014f05c009b135332535a4f254f8a8ee85782b73a9d19c9e829f003725221ad3328777af70d468bdf0640f30a
+  7fd4862c6b92217c2a174e9f91c52c0d29853a34cf11329b0b95851f26da2b262cf231b58c4da272b66249a39943c543602f2526114374b4d16166995cbc2b05
   ```
 - **BindingProof:**
 
   ```
-  a201584885025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834cf6025840031699b39400d9027b249c707f4b72186d03b12014f05c009b135332535a4f254f8a8ee85782b73a9d19c9e829f003725221ad3328777af70d468bdf0640f30a
+  a201584885015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834cf60258407fd4862c6b92217c2a174e9f91c52c0d29853a34cf11329b0b95851f26da2b262cf231b58c4da272b66249a39943c543602f2526114374b4d16166995cbc2b05
   ```
 - **response:**
 
   ```
-  00a201584885025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834cf6025840031699b39400d9027b249c707f4b72186d03b12014f05c009b135332535a4f254f8a8ee85782b73a9d19c9e829f003725221ad3328777af70d468bdf0640f30a
+  00a201584885015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70058205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834cf60258407fd4862c6b92217c2a174e9f91c52c0d29853a34cf11329b0b95851f26da2b262cf231b58c4da272b66249a39943c543602f2526114374b4d16166995cbc2b05
   ```
 
 #### ENTERPRISE_BOUND
@@ -1827,22 +1884,22 @@ Uses the existing E.0 inputs and challenge. The ENTERPRISE_BOUND vector uses res
 - **bindingBody:**
 
   ```
-  85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869701f6
+  85015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869701f6
   ```
 - **signature:**
 
   ```
-  696ede6fae4dd54e2cc7d98a8d5d65d981bddaeea3a451db50bdf37a0048b8b0858ee419e12c324145ee812e0ceaf911483eaccdbc61a31a6c58f52aa9260b0b
+  b79127a9754e75de54dd8b48ebfe660dab81a29d55faccc90f4e9bf0fb79833a2f0e55cba803295549b403713fc0e7c66da9d7e87e279468a6c662c5f75e4b0e
   ```
 - **BindingProof:**
 
   ```
-  a201588e85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869701f6025840696ede6fae4dd54e2cc7d98a8d5d65d981bddaeea3a451db50bdf37a0048b8b0858ee419e12c324145ee812e0ceaf911483eaccdbc61a31a6c58f52aa9260b0b
+  a201588e85015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869701f6025840b79127a9754e75de54dd8b48ebfe660dab81a29d55faccc90f4e9bf0fb79833a2f0e55cba803295549b403713fc0e7c66da9d7e87e279468a6c662c5f75e4b0e
   ```
 - **response:**
 
   ```
-  00a201588e85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869701f6025840696ede6fae4dd54e2cc7d98a8d5d65d981bddaeea3a451db50bdf37a0048b8b0858ee419e12c324145ee812e0ceaf911483eaccdbc61a31a6c58f52aa9260b0b
+  00a201588e85015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70158205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a869701f6025840b79127a9754e75de54dd8b48ebfe660dab81a29d55faccc90f4e9bf0fb79833a2f0e55cba803295549b403713fc0e7c66da9d7e87e279468a6c662c5f75e4b0e
   ```
 
 #### PERSONALIZED_NO_PIN
@@ -1855,37 +1912,31 @@ Uses the existing E.0 inputs and challenge. The ENTERPRISE_BOUND vector uses res
 - **bindingBody:**
 
   ```
-  85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a8697005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e
+  85015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a86970058203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b41901
   ```
 - **signature:**
 
   ```
-  919d3c8e75b68de92889c61c32f7df775a2325371a4528f5a4b276272fd3e0a7bf69f42886f1964b0d103e3002c4503d36cc24c54b106bc89bd99ed92d78e403
+  89a15a40022d791c26e13591700c185b1a06c6990d827fc3ba8794a24d49845504f80773ab457f92c3c9466bfa326e2afbded3f542bb17dea797763191928005
   ```
 - **BindingProof:**
 
   ```
-  a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a8697005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e025840919d3c8e75b68de92889c61c32f7df775a2325371a4528f5a4b276272fd3e0a7bf69f42886f1964b0d103e3002c4503d36cc24c54b106bc89bd99ed92d78e403
+  a20158af85015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a86970058203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190102584089a15a40022d791c26e13591700c185b1a06c6990d827fc3ba8794a24d49845504f80773ab457f92c3c9466bfa326e2afbded3f542bb17dea797763191928005
   ```
 - **response:**
 
   ```
-  00a20158af85025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a8697005820c202df527567f5e24fcd8dccedcbcda3881cc2cefc4eba4d7e52b5aefbf55d8e025840919d3c8e75b68de92889c61c32f7df775a2325371a4528f5a4b276272fd3e0a7bf69f42886f1964b0d103e3002c4503d36cc24c54b106bc89bd99ed92d78e403
+  00a20158af85015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb70258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c8458202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970558202665b936ca08fb6a07b2869710f85edd0adff695cfc39910c7cef410c94a86970058203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190102584089a15a40022d791c26e13591700c185b1a06c6990d827fc3ba8794a24d49845504f80773ab457f92c3c9466bfa326e2afbded3f542bb17dea797763191928005
   ```
 
 PIN_READY rejects request `50a10258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c` with `0xf0`.
 
 ### E.11 Group member signing
 
-Uses the E.0 inputs and in addition the seed labels member2-current, member2-next, member2-newnext and slot0-newnext. Slot 0 (WORK, AID of E.4) and an external member 2 form a two-member group with `kt="2"`, slot 0 listed second. Slot 0 signs its own `icp` (signCounter 1) and then the group `icp` under kind 6 (signCounter 2). The group `rot` assumes that slot 0 has rotated its own AID (current = former next) and lists it first, so its index and ondex differ. The StateProof uses the authState of E.8. E.11 runs under its own TrustConfig, below: E.3's role `ops` (`0x1F03`) has no group bits, so the same role key is installed with all bits of Appendix B (`0xFF03`). KeyRef does not depend on the configuration, so the KeyRef of E.5 applies unchanged; only the configurationDigest in the StateProof differs from E.8. After that StateProof, slot 0 signs the group `exn` under kind 8 (signCounter 3).
+Uses the E.0 inputs and in addition the seed labels member2-current, member2-next, member2-newnext and slot0-newnext. Slot 0 (WORK, AID of E.4) and an external member 2 form a two-member group with `kt="2"`, slot 0 listed second. Slot 0 signs its own `icp` (signCounter 1) and then the group `icp` under kind 6 (signCounter 2). The group `rot` assumes that slot 0 has rotated its own AID (current = former next) and lists it first, so its index and ondex differ. The StateProof uses the authState of E.8. E.11 runs under the successor configuration of E.12, installed by UpdateTrustConfig over E.3: E.3's role `ops` (`0x1F03`) has no group bits, so the same role key is granted all bits of Appendix B (`0xFF03`) while slot 0 keeps the identity of E.4–E.8. KeyRef does not depend on the configuration, so the KeyRef of E.5 applies unchanged; only the configurationDigest in the StateProof differs from E.8. After that StateProof, slot 0 signs the group `exn` under kind 8 (signCounter 3).
 
-- **group TrustConfig:** body = [2, device, tenant, 0, ownerMask 0x03, minPinChars 6, [['ops', 0xFF03, rolePublic]], []]
-- **group TrustConfig envelope:**
-
-  ```
-  82587588025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f97050003068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca805840ca6d87805474fca241dbc1ff622a8e2b6d0c3061aa88e7dcd45ad42927cbcf43455cd092d1ffaeeae548fa058829302fcb04d4eec7f48185cc9315b28b98f00d
-  ```
-- **group TrustConfig configurationDigest:** `290b7e5635863f5d6b9df7a5acc2dde23cf7235cb9c1931e22454e298fca0985`
+- **group TrustConfig:** the successor configuration of E.12 (configurationDigest `ee3dfaf722220976175bf74bc33ab946411ba4aaf30cdc5bba23a0ea7d5e4902`)
 - **member2 currentPublic:** `cd2de7a36c2a429a16872dcd18f708dad35e2318fe3f8157726d24878559917f`
 - **member2 nextPublic:** `c430d44351ccad77e0f0d9f2c9c0dea4707ffe78ddae70d93a2089f64e639aa9`
 - **group icp (UTF-8):**
@@ -1899,7 +1950,7 @@ Uses the E.0 inputs and in addition the seed labels member2-current, member2-nex
 - **GROUP Ticket envelope (kind 6, signCounter 2):**
 
   ```
-  83584b86020658207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4025820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd190189636f70735840980211fd01cdbd9118356e4954a687b038130cba1d44d84a8eff0787fbb43cc757df08052e6fb4bc9dbdf21af64e0d6811f4967c1ab551aae4a79bfb69267a0a
+  83584b86010658207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4025820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd190189636f7073584066bbf5822462d717877da94641a4bc5068c22360853e0f9f9e258098d880fa046dd2a200c1edc85ff185603b51e5f60c9f0ef712219fb865858fa3befa828e0e
   ```
 - **GROUP Signed:**
 
@@ -1914,12 +1965,12 @@ Uses the E.0 inputs and in addition the seed labels member2-current, member2-nex
 - **stateBody with group element:**
 
   ```
-  88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820290b7e5635863f5d6b9df7a5acc2dde23cf7235cb9c1931e22454e298fca098558205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd020000
+  88015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820ee3dfaf722220976175bf74bc33ab946411ba4aaf30cdc5bba23a0ea7d5e490258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd020000
   ```
 - **StateProof with group element:**
 
   ```
-  a2015901ed88025820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820290b7e5635863f5d6b9df7a5acc2dde23cf7235cb9c1931e22454e298fca098558205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd020000025840bf16cf2faf77206770dcd50847c29df9bf716c870897e6bd32e887a29d68e1443a94f930dcbe4ab46e1e30881212bb3259a17c7fec873282981b027d84d7d30d
+  a2015901ed88015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820ee3dfaf722220976175bf74bc33ab946411ba4aaf30cdc5bba23a0ea7d5e490258205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150289010000f6f6f6f6f60089020000f6f6f6f6f60089030000f6f6f6f6f6008a00782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671666369637000782c454d325464537778766a414847736d73706d4651355730625051684d343249716b305349454b77396b7671661901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd02000002584050b5874d62d46b2822589b36ba1cf62073f528d2dbb9d8d2499bb2494efd7f9bc7e77ecdcfc5b14388c517532a5f5e868500bfc05afc139a17998bda1f97a30a
   ```
 - **indexed signature, group icp (index 1, code A):**
 
@@ -1954,7 +2005,7 @@ Uses the E.0 inputs and in addition the seed labels member2-current, member2-nex
 - **GROUP_EXN Ticket envelope (kind 8, signCounter 3):**
 
   ```
-  83584b86020858207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d403582058c38bad4da77b610acb20e1ea39b6b6099c3fb5c83fb41ac2d3841d5e04a870190119636f7073584084f101858815967b2b5244a0cb34d04c6dd20f03ff38526c0cb94e66c295456b101cd302559a43ac90a9a2e56300d1b752b50cbd8e6247d8eb8112e6882e0706
+  83584b86010858207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d403582058c38bad4da77b610acb20e1ea39b6b6099c3fb5c83fb41ac2d3841d5e04a870190119636f7073584023d2e56e38e10e39cfba3d859369f57395982ffa27a09a4e5ee6fb28feadda9a27bb701d0950e1187015208935873114446d955a11f225ee65c1c8467e164a07
   ```
 - **GROUP_EXN Signed:**
 
@@ -1962,15 +2013,51 @@ Uses the E.0 inputs and in addition the seed labels member2-current, member2-nex
   a501584014a042c5c7d45041f460602f395c1ed1d0422fba72f8f37e2ba6f1866609a87b3bf2addbbde8ba7b2ddff5eedf6a229c927b033c0e28c28e69d1d177500154040258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b891503582058c38bad4da77b610acb20e1ea39b6b6099c3fb5c83fb41ac2d3841d5e04a870041901190503
   ```
 
+### E.12 UpdateTrustConfig
+
+Uses the E.0 inputs, including pinUvAuthToken, and the contextId of E.1. The configuration of E.3 (sequence 0) is installed; the successor grants role `ops` all bits of Appendix B and is used by E.11.
+
+body = [1, device, tenant, 0, sequence 1, prior = configurationDigest of E.3, ownerMask 0x03, minPinChars 6, [['ops', 0xFF03, rolePublic]], []]
+
+- **body:**
+
+  ```
+  8a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705000158203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190103068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca80
+  ```
+- **rootSignature:**
+
+  ```
+  a977182de99b27c08a8ddc8c270025b0f190cf630f6b0845f5b7061d37d576a3572210a2283b7b2e97b6dac6c8da8187fc612e202d5791655afc2346d76fba0f
+  ```
+- **envelope:**
+
+  ```
+  8258988a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705000158203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190103068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca805840a977182de99b27c08a8ddc8c270025b0f190cf630f6b0845f5b7061d37d576a3572210a2283b7b2e97b6dac6c8da8187fc612e202d5791655afc2346d76fba0f
+  ```
+- **configurationDigest:** `ee3dfaf722220976175bf74bc33ab946411ba4aaf30cdc5bba23a0ea7d5e4902`
+- **H(CBOR(P)):** `a79e7e3c602398db029c1727fd7a03eb0a7c49c8311d44ab983da6396e303129`
+- **auth message (`"VCAP-CMD\0" ‖ contextId ‖ 0x61 ‖ H(CBOR(P))`):**
+
+  ```
+  564341502d434d440076495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee61a79e7e3c602398db029c1727fd7a03eb0a7c49c8311d44ab983da6396e303129
+  ```
+- **pinUvAuthParam:** `396226c0504f7f1737f67ed650ebab9d9cb26944c22bf895c710eecc0b819b44`
+- **request (command byte + CBOR):**
+
+  ```
+  61a30158dd8258988a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705000158203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190103068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca805840a977182de99b27c08a8ddc8c270025b0f190cf630f6b0845f5b7061d37d576a3572210a2283b7b2e97b6dac6c8da8187fc612e202d5791655afc2346d76fba0f18fe0218ff5820396226c0504f7f1737f67ed650ebab9d9cb26944c22bf895c710eecc0b819b44
+  ```
+- **request length:** `265`
+
 ## Appendix F Change Control
 
 This document follows these rules from the Candidate onward:
 
 1. **Versions.** A 1.0.x revision only corrects errors: it changes no message bytes, no domain separator or code point, and no outcome for an implementation that followed the intended reading. A 1.y revision only adds: new optional operations, fields behind a new version path, or new registered values; an implementation of 1.0 remains conformant. Any other change requires 2.0.
 2. **Section numbers.** Published section and appendix numbers are not reused. A removed section remains as a heading marked "(Reserved)".
-3. **Registered values.** Command codes, status codes, GetInfo keys, signing kinds, role capability bits (Appendix B), signature domains (§6.5) and TrustConfig versions are assigned only by a published version of the relevant document. A value is never reassigned; a withdrawn value is marked Reserved.
+3. **Registered values.** Command codes, status codes, GetInfo keys, signing kinds, role capability bits (Appendix B), signature domains (§6.5) and structure versions (§9) are assigned only by a published version of the relevant document. A value is never reassigned; a withdrawn value is marked Reserved.
 4. **Errata.** Errata are submitted as issues in the document's repository. An accepted erratum is published in a 1.0.x revision and listed in the change log.
 
 **Change log.**
 
-- **11 November 2026.** Candidate Specification; first published version.
+- **14 November 2026.** Candidate Specification; first published version.
