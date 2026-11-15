@@ -454,6 +454,47 @@ N["UpdateTrustConfig whose prior is not the installed configurationDigest"] = {"
 N["Personalize with the E.12 successor (sequence 1)"] = {"configuration": hx(g_tc_env), "status": "02"}
 assert len(u_request) <= 2048
 
+# ------------------------------------------------ Linked Ticket (§8.2 step 1, §9.2)
+
+def linked_ticket(kind, kref, counter, msg, linked):
+    body = cbor([1, kind, kref, counter, H(msg), len(msg), linked])
+    sig = ed_sign(role_sk, b"VCAP-SIGN\0" + body)
+    return body, sig, cbor([body, "ops", sig])
+
+
+# Coordination exn of slot 0 for the group icp of E.11 (skeleton: KERI defines
+# further members of 'a'; the embed block carries its own SAID 'd').
+c_embed_fields = [("d", ""), ("icp", json.loads(g_icp))]
+_dummy = [("d", "#" * 44), ("icp", json.loads(g_icp))]
+c_embed_said = qb64("E", blake3.blake3(kjson(_dummy).encode()).digest())
+c_exn, c_exn_said = keri_event([
+    ("v", ""), ("t", "exn"), ("d", ""), ("i", aid), ("rp", ""), ("p", ""),
+    ("dt", "2026-11-07T00:00:00.000000+00:00"), ("r", "/multisig/icp"), ("q", {}),
+    ("a", {"gid": gaid}), ("e", {"d": c_embed_said, "icp": json.loads(g_icp)}),
+], said_labels=("d",))
+# Slot 0 signs the group icp under kind 6 (counter 2, E.11), which sets the UP
+# anchor; the linked Ticket for the coordination exn carries counter 3.
+c_t_body, c_t_sig, c_t_env = linked_ticket(4, kref0, 3, c_exn, H(g_icp))
+c_sig = ed_sign(s0c_sk, c_exn)
+c_signed = cbor({1: c_sig, 2: s0c_pub, 3: H(c_exn), 4: len(c_exn), 5: 3})
+V["E.13 Linked Ticket"] = {
+    "coordination exn (UTF-8)": c_exn.decode(), "coordination exn length": len(c_exn),
+    "coordination exn originalDigest": hx(H(c_exn)),
+    "linkedDigest (= group icp originalDigest of E.11)": hx(H(g_icp)),
+    "linked Ticket body (kind 4, signCounter 3)": hx(c_t_body),
+    "linked Ticket envelope": hx(c_t_env),
+    "Signed (coordination exn)": hx(c_signed),
+}
+ed_verify(role_pub, c_t_sig, b"VCAP-SIGN\0" + c_t_body)
+ed_verify(s0c_pub, c_sig, c_exn)
+assert len(c_t_env) <= 512
+bad_body = cbor([1, 6, kref0, 2, H(g_icp), len(g_icp), H(g_icp)])
+N["linked Ticket with kind other than 4 (§8.3 step 5)"] = {
+    "body": hx(bad_body), "status": "02"}
+N["linked Ticket whose linkedDigest names no UP anchor"] = {
+    "linkedDigest": hx(H(b"no such signature")),
+    "outcome": "collects a new user action; over NFC after the tap was consumed: 3b (UP_REQUIRED)"}
+
 # --------------------------------------------------------------- self-check
 
 ed_verify(root_pub, tc_sig, b"VCAP-TRUST\0" + tc_body)

@@ -134,6 +134,15 @@
       "pinUvAuthParam": "396226c0504f7f1737f67ed650ebab9d9cb26944c22bf895c710eecc0b819b44",
       "request (command byte + CBOR)": "61a30158dd8258988a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705000158203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190103068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca805840a977182de99b27c08a8ddc8c270025b0f190cf630f6b0845f5b7061d37d576a3572210a2283b7b2e97b6dac6c8da8187fc612e202d5791655afc2346d76fba0f18fe0218ff5820396226c0504f7f1737f67ed650ebab9d9cb26944c22bf895c710eecc0b819b44",
       "request length": 265
+    },
+    "E.13 Linked Ticket": {
+      "coordination exn (UTF-8)": "{\"v\":\"KERI10JSON0002df_\",\"t\":\"exn\",\"d\":\"EJU3KvdDWId9krPfly4ZGFBPvrzIhY7F9IkSD7o5QXUh\",\"i\":\"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2\",\"rp\":\"\",\"p\":\"\",\"dt\":\"2026-11-07T00:00:00.000000+00:00\",\"r\":\"/multisig/icp\",\"q\":{},\"a\":{\"gid\":\"EM2TdSwxvjAHGsmspmFQ5W0bPQhM42Iqk0SIEKw9kvqf\"},\"e\":{\"d\":\"EM-fintn_eVvJvZzv3atNdDJ_2tfwxylqbvHREmRbkZE\",\"icp\":{\"v\":\"KERI10JSON000189_\",\"t\":\"icp\",\"d\":\"EM2TdSwxvjAHGsmspmFQ5W0bPQhM42Iqk0SIEKw9kvqf\",\"i\":\"EM2TdSwxvjAHGsmspmFQ5W0bPQhM42Iqk0SIEKw9kvqf\",\"s\":\"0\",\"kt\":\"2\",\"k\":[\"DM0t56NsKkKaFoctzRj3CNrTXiMY_j-BV3JtJIeFWZF_\",\"DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV\"],\"nt\":\"2\",\"n\":[\"EOyxjcMz4XHUq4xLA1NMzKVtNBIxhS17WxH9tuBMHT-d\",\"ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M\"],\"bt\":\"0\",\"b\":[],\"c\":[],\"a\":[]}}}",
+      "coordination exn length": 735,
+      "coordination exn originalDigest": "906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b7",
+      "linkedDigest (= group icp originalDigest of E.11)": "ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd",
+      "linked Ticket body (kind 4, signCounter 3)": "87010458207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4035820906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b71902df5820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd",
+      "linked Ticket envelope": "83586d87010458207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4035820906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b71902df5820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd636f70735840def32126058635ed897910bdb3093c6fa19ec50238360cc3d515d81d7981e4f035a312f31a0d4f48ace1b92f1bb96b7590e9f0dbd62ee28c7f7497b9a47ba70f",
+      "Signed (coordination exn)": "a50158408d1fac7cc1747dbde37f7ff57d3173144912c3a5fb21d893d4b857dbbcf43f89f264f0df6c9f0cac271afb2d8bad927603d873703d7f4a67f7493939156e8c000258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b8915035820906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b7041902df0503"
     }
   },
   "negative": {
@@ -167,6 +176,14 @@
     "Personalize with the E.12 successor (sequence 1)": {
       "configuration": "8258988a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f9705000158203cbecf0a517ab2f977caf227a01a38ff8cc794f63ade6a0610a521a116b4190103068183636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca805840a977182de99b27c08a8ddc8c270025b0f190cf630f6b0845f5b7061d37d576a3572210a2283b7b2e97b6dac6c8da8187fc612e202d5791655afc2346d76fba0f",
       "status": "02"
+    },
+    "linked Ticket with kind other than 4 (§8.3 step 5)": {
+      "body": "87010658207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4025820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd1901895820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd",
+      "status": "02"
+    },
+    "linked Ticket whose linkedDigest names no UP anchor": {
+      "linkedDigest": "f14880d76f8da757bcdd18d83ea78590147166b2c7f658ba6fe7e72f97a272dc",
+      "outcome": "collects a new user action; over NFC after the tap was consumed: 3b (UP_REQUIRED)"
     }
   }
 }

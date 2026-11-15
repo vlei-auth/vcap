@@ -1,6 +1,6 @@
 # vLEI Client to Authenticator Protocol (VCAP) 1.0
 
-*Candidate Specification — 11 November 2026*
+*Candidate Specification — 15 November 2026*
 
 **Specification identifier:** VCAP-1.0  
 **URL:** https://vlei-auth.github.io/vcap/  
@@ -18,7 +18,7 @@
 
 ## Status of this document
 
-This is a **Candidate Specification** of VCAP 1.0, dated 14 November 2026. Its features are frozen: until it becomes final it changes only to correct errors, remove ambiguity, or resolve findings of the review below, and every such change is listed in the change log. It becomes the final 1.0 when (1) at least one Enterprise Service and one Platform, written independently of each other's code, pass the VAF conformance tests including VAF BASE-T15–T20 on real authenticators; (2) an implementation written only from these documents reproduces the test vectors of VCAP Appendix E and completes a signature and its archiving; and (3) an independent security review of VCAP, VCAP-EI and VAF has been completed and its findings resolved. Comments and errata are submitted as issues at <https://github.com/vlei-auth/vcap/issues>.
+This is a **Candidate Specification** of VCAP 1.0, dated 15 November 2026. Its features are frozen: until it becomes final it changes only to correct errors, remove ambiguity, or resolve findings of the review below, and every such change is listed in the change log. It becomes the final 1.0 when (1) at least one Enterprise Service and one Platform, written independently of each other's code, pass the VAF conformance tests including VAF BASE-T15–T20 on real authenticators; (2) an implementation written only from these documents reproduces the test vectors of VCAP Appendix E and completes a signature and its archiving; and (3) an independent security review of VCAP, VCAP-EI and VAF has been completed and its findings resolved. Comments and errata are submitted as issues at <https://github.com/vlei-auth/vcap/issues>.
 
 ## License and Intellectual Property
 
@@ -99,7 +99,7 @@ An Authenticator implements at least one transport of Section 11 and declares in
 | USB HID transport | §11.2 |
 | NFC transport | §11.3 |
 | USB CCID transport | §11.4 |
-| Group member signing (kinds 6, 7 and 8) | §§ 5.2, 7.4.2, 7.7, 7.8, 8.4.4, 8.5.3, 8.7, 9.3, 9.4, 12.8 item 7, 12.9, 13.2 item 8, Appendix B |
+| Group member signing (kinds 6, 7 and 8, and linked Tickets) | §§ 5.2, 7.4.2, 7.7, 7.8, 8.2 step 1, 8.3 step 5, 8.4.4, 8.5.3, 8.7, 9.2, 9.3, 9.4, 12.8 item 7, 12.9, 13.2 items 8 and 12, Appendix B |
 
 ### 2.2 Normative Statements
 
@@ -193,7 +193,7 @@ Authenticator (attestation key, 4 slots) ◀─CTAPHID / NFC / CCID─▶ Platfo
 ```
 
 - The authenticator trusts only: its own attestation identity, the enterprise root key bound by BindEnterprise, the TrustConfig role keys installed under a signature of the enterprise root key, and the employee's PIN and touch.
-- The platform is untrusted: it can block, reorder and observe the link, and can send any command with a valid token. A new signature still requires an enterprise Ticket and a new UP, and every rotation stays within keys inside the authenticator.
+- The platform is untrusted: it can block, reorder and observe the link, and can send any command with a valid token. A new signature still requires an enterprise Ticket and a new UP (or, for a coordination message whose Ticket the enterprise linked to the member signature just made, that signature's UP, §8.2 step 1), and every rotation stays within keys inside the authenticator.
 - The enterprise cannot sign alone: role keys only issue Tickets, and a signature requires the employee's PIN authorization and a physical user action.
 
 ### 4.2 Lifecycle Overview
@@ -317,7 +317,7 @@ UNUSED ────────────────▶ CREATED ────�
 - A context that is not held is zeroized when another transport sends a command that requires a context or a ClientPIN subcommand other than getPinRetries; that command then proceeds normally.
 - A new `getKeyAgreement` on the same transport first zeroizes the old context and then establishes a new one; during an upload it returns `BUSY` per §5.4.
 - A token MUST be first used to authenticate a command within 19 800 ms of issue (the initial usage time limit; CTAP uses this value for NFC, and VCAP applies it to all transports), or it becomes invalid. After first use it remains valid until the context ends (maximum usage period 600 000 ms), with no idle timeout.
-- **Zeroization events:** transport disconnection, `SELECT` of the FIDO AID over NFC or of the CCID AID over CCID, CCID ICC power-off, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / UpdateTrustConfig / Reset, and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
+- **Zeroization events:** transport disconnection, `SELECT` of the FIDO AID over NFC or of the CCID AID over CCID, CCID ICC power-off, `CTAPHID_CANCEL`, the `Cancel` command, context expiry, token expiry detected, authentication or integrity failure, successful BindEnterprise / Personalize / Reset, a successful UpdateTrustConfig that sets forcePINChange (§7.12 step 10), and the errors listed in §10.2. Zeroization clears the fragment buffer, pending response, upload and signer, parser, UP anchor (§8.2), token, P-256 key agreement key and contextId. The persistent KEL head and prepared key are kept.
 
 ### 5.4 Upload State
 
@@ -436,13 +436,15 @@ Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and ar
 | 0x56 | Recover | `{1:slot,2:originalDigest_b32}` | READ | No | Signed (original signature) | No |
 | 0x57 | Cancel | `{}` | None (owning transport only) | No | Empty | Yes |
 | 0x60 | Personalize | `{1:trustConfigEnvelope_bstr}` | None; requires context + enterprise root signature | **Yes** | Empty | Yes |
-| 0x61 | UpdateTrustConfig | `{1:trustConfigEnvelope_bstr}` | MANAGE; requires enterprise root signature | **Yes** | Empty | Yes |
+| 0x61 | UpdateTrustConfig | `{1:trustConfigEnvelope_bstr}` | MANAGE; requires enterprise root signature | **Yes** | Empty | Only when forcePINChange is set (§7.12) |
 | 0x63 | BindEnterprise | `{1:tenant_b32,2:enterpriseRoot_b32}` | None; requires context | **Yes** | Empty | Yes |
 | 0x70 | UploadBegin | `{1:slot,2:kind,3:ticket_bstr}` | SIGN | No | Empty | No |
 | 0x71 | UploadChunk | `{1:offset,2:bytes_bstr}` | SIGN | No | Empty | No |
 | 0x72 | UploadEnd | `{}` | SIGN | **Yes** | Signed | No |
 
 GetInfo and Reset carry no parameter map, as in CTAP.
+
+The UP column states that the command collects a new UP per §8.2. Over NFC the tap of the field session satisfies one such command and a further one returns `UP_REQUIRED` (§8.2 step 2). On an authenticator that implements group member signing, a Sign or UploadEnd whose Ticket is linked to the signature made immediately before it in the same context takes over that signature's UP instead (§8.2 step 1, §9.2).
 
 Commands that require a token permission append two keys after the business parameters: `254` = **pinUvAuthProtocol** (fixed at 2) and `255` = **pinUvAuthParam** (32 bytes, §8.1). Parameters below are written as `254:2, 255:pinUvAuthParam_b32`.
 
@@ -634,7 +636,7 @@ Generates a new signature over a message with a slot key. Larger messages use th
 
 Kinds 6, 7 and 8 exist only on an authenticator that implements group member signing (§2.1); elsewhere they return `INVALID_PARAMETER`. The column "KEL" distinguishes kinds that advance the slot's own KEL (Yes), kinds that sign another AID's key event and advance a group record (Group), and other messages (No).
 
-**Required permission:** SIGN. **UP:** yes, one new user action each time (sensor press, or NFC tap per §8.2). **Result:** Signed (§9.4).
+**Required permission:** SIGN. **UP:** yes, one new user action each time (sensor press, or NFC tap per §8.2), except that a request whose Ticket is linked to the immediately preceding signature takes over that signature's UP (§8.2 step 1). **Result:** Signed (§9.4).
 
 The authenticator performs the following steps (**BEGIN phase**):
 
@@ -642,7 +644,7 @@ The authenticator performs the following steps (**BEGIN phase**):
 2. If `slot ∉ 0..3` or `kind` is not one of 1..5, or 6..8 on an authenticator that implements group member signing, return `INVALID_PARAMETER`.
 3. If not personalized, return `INVALID_STATE`.
 4. Read the slot's persistent state and verify its integrity (including keys, where needed prepared, and for kinds 6, 7 and 8 the group records of all four slots); on failure return `RECOVERY_REQUIRED`.
-5. Verify the Ticket per §8.3, obtaining `originalLength`, `originalDigest` and `signCounter`.
+5. Verify the Ticket per §8.3, obtaining `originalLength`, `originalDigest`, `signCounter` and, for a linked Ticket, `linkedDigest`.
 6. If `kind` is not allowed for the slot's owner (column "Allowed owner" above), return `OPERATION_DENIED`. Pre-check persistent storage space per §8.7 (insufficient: `NO_SPACE`). If `kind` is a KEL kind (1..3), perform the key event pre-checks of §8.4.1. If `kind` is 6 or 7, require the slot to be ACTIVE (else `INVALID_STATE`) and select the group event checks of §8.4.4. If `kind` is 8, require the slot to be ACTIVE (else `INVALID_STATE`) and select the check of §8.5.3. Otherwise, require the slot to be ACTIVE (else `INVALID_STATE`) and select the corresponding format check of §8.5.
 7. Select the signing seed: old.next for ROT, current otherwise.
 8. Prepare to sign with the selected key (§8.6).
@@ -662,10 +664,10 @@ The authenticator performs the following steps (**BEGIN phase**):
 16. Collect one UP per §8.2 (hold 0).
 17. After UP, check again: transport still connected (else `OPERATION_DENIED`), persistent storage space (else `NO_SPACE`), context and token deadlines (else `PIN_TOKEN_EXPIRED`), and that the slot's signature counter still equals `signCounter − 1` (else `TICKET_INVALID`). An expired deadline **MUST** cause rejection; deadlines are never extended for a signature.
 18. Complete the 64-byte signature over original (§8.6); self-verify it with actualPublic; on failure return `INTERNAL`.
-19. Commit atomically per §8.7: the signature counter becomes `signCounter`, `lastSigned` records this signature, for KEL kinds the slot's latest (and keys, for ROT) advance, and for kinds 6 and 7 the group record is created or updated.
+19. Commit atomically per §8.7: the signature counter becomes `signCounter`, `lastSigned` records this signature, for KEL kinds the slot's latest (and keys, for ROT) advance, and for kinds 6 and 7 the group record is created or updated. Then, on an authenticator that implements group member signing, if step 16 collected a new user action (not an inherited one) and `kind` is 5, 6, 7 or 8, set the context's UP anchor to (slot, `originalDigest`, `signCounter`) (§8.2); otherwise leave it cleared.
 20. Return Signed: `{1:signature, 2:actualPublic, 3:originalDigest, 4:originalLength, 5:signCounter}`.
 
-Any failed step zeroizes the signing state, the parser and the whole context; when step 16 returns USER_ACTION_TIMEOUT, only the signing state, parser and upload state are cleared and the context and token are kept (§10.2). The signature MUST NOT leave the authenticator in any form before step 19 completes.
+Any failed step zeroizes the signing state, the parser and the whole context, with two exceptions (§10.2): when step 16 returns USER_ACTION_TIMEOUT, only the signing state, parser and upload state are cleared and the context and token are kept; and when step 5 returns `TICKET_INVALID`, no message byte has been processed and no UP collected, so only the Ticket and signing state are cleared and the context and token are kept. The signature MUST NOT leave the authenticator in any form before step 19 completes.
 
 ### 7.8 Recover (0x56)
 
@@ -768,7 +770,7 @@ Personalize installs the first configuration of a reset epoch. Later changes to 
 
 Replaces the installed TrustConfig with its successor signed by the enterprise root key. The PIN, the four slots with their keys, heads, prepared entries, signature counters and group records, the FIDO credentials, the binding record and `resetEpoch` are kept.
 
-**Parameters:** `{1:trustConfigEnvelope_bstr, 254:2, 255:pinUvAuthParam_b32}` (envelope ≤ 1536 bytes). **Required permission:** MANAGE. **UP:** yes. **Result:** empty; the context is closed on success.
+**Parameters:** `{1:trustConfigEnvelope_bstr, 254:2, 255:pinUvAuthParam_b32}` (envelope ≤ 1536 bytes). **Required permission:** MANAGE. **UP:** yes. **Result:** empty; on success the context is closed only when forcePINChange is set (step 10).
 
 The authenticator performs the following steps:
 
@@ -781,10 +783,11 @@ The authenticator performs the following steps:
 7. Collect one UP per §8.2.
 8. Confirm that the context is still valid and the transport is still connected.
 9. Atomically commit the new TrustConfig, and set forcePINChange if the stored PIN's code-point length is below the new `minPinChars`. No other persistent state changes. An implementation that binds slot or group-record state to the installed configuration rebinds that state within the same atomic commit.
-10. After the write completes, zeroize the context and return empty success.
+10. After the write completes: if forcePINChange is now set, zeroize the context; otherwise keep the context and its token unchanged. Return empty success.
 
 Rules:
 
+- A context kept by step 10 continues with the permissions of its token, which do not depend on the configuration; the configuration-dependent checks of every later command in it use the new configuration (next rule). When the stored PIN no longer meets the new `minPinChars`, step 10 closes the context, so the next token is obtained only after changePIN (§7.2 rule 2).
 - Every command after the commit uses only the new configuration: the configurationDigest of StateProof and BindingProof, `ownerMask` for CreateIdentity, `minPinChars` for ClientPIN and GetInfo, `roles` for Ticket verification (§8.3) and the extensions.
 - A failure or power loss before the commit leaves the previous configuration installed; after it, the new one. No mixture of the two is ever in effect.
 - Because `sequence` increases by exactly one and `prior` names the installed configuration, a configuration that was installed or replaced earlier is never installed again within the reset epoch, and of two different successors of one configuration at most one can be installed. Reset ends the chain; Personalize starts the next reset epoch at `sequence` 0.
@@ -878,21 +881,23 @@ Inputs: `hold_ms` (0 for ordinary operations, 5000 for Reset), the current trans
 
 The authenticator performs the following steps:
 
-1. If the transport is NFC, `hold_ms` is 0, and the tap of the current field session has not been consumed (§11.3), mark it consumed and return success. Over USB HID and CCID there is no tap; UP always comes from the sensor.
-2. Turn on the presence indicator; turn it off however this procedure ends. The authenticator MUST have a touch sensor and a visible presence indicator light that is lit only while it waits for UP.
-3. Record the start time `t0`. Let `hold = max(hold_ms, 30)`.
-4. Loop until a result is reached:
+1. **Linked Ticket.** On an authenticator that implements group member signing: if the request is a Sign or UploadEnd of kind 4 whose Ticket carries `linkedDigest` (§9.2), and the context's UP anchor is set, names the request's slot, has `originalDigest = linkedDigest`, and has a `signCounter` one below the Ticket's, clear the UP anchor and return success without a user action. Otherwise the request collects a new user action below, as for any Ticket.
+2. If the transport is NFC and `hold_ms` is 0: if the tap of the current field session has not been consumed (§11.3), mark it consumed and return success; otherwise return `UP_REQUIRED` at once, without turning on the presence indicator or waiting. Over NFC the tap is the only user action for an ordinary operation. Over USB HID and CCID there is no tap; UP always comes from the sensor.
+3. Turn on the presence indicator; turn it off however this procedure ends. The authenticator MUST have a touch sensor and a visible presence indicator light that is lit only while it waits for UP.
+4. Record the start time `t0`. Let `hold = max(hold_ms, 30)`.
+5. Loop until a result is reached:
    1. If the transport has been disconnected, return `OPERATION_DENIED`.
    2. If the transport reports a cancellation (`CTAPHID_CANCEL`, §11.2), return `KEEPALIVE_CANCEL`.
    3. If a `deadline` is set and has passed, return `PIN_TOKEN_EXPIRED`.
    4. If `now − t0 ≥ 30 000 ms`, stop waiting and return `USER_ACTION_TIMEOUT`.
    5. Release detection: a touch already held when the request starts does not count; the sensor MUST first be released and stay released for at least 30 ms.
    6. Press detection: a subsequent new press held for at least `hold` is accepted; a release before then returns to waiting for a press.
-5. On acceptance, return success.
+6. On acceptance, return success.
 
 Rules:
 
-- Each UP-requiring request consumes its own new sensor press or its own NFC tap. Over NFC one tap satisfies at most one request; a further UP-requiring request in the same field session needs a sensor press or a new tap. The authenticator MUST NOT latch or reuse a press or tap, and a platform MUST NOT retry a signature automatically.
+- Each UP-requiring request consumes its own new sensor press or its own NFC tap, except a request with a linked Ticket (step 1). Over NFC one tap satisfies at most one request; a further UP-requiring request in the same field session returns `UP_REQUIRED` without being executed, and the platform asks the user for a new tap, which begins a new field session and therefore needs a new context (§11.3). The authenticator MUST NOT latch or reuse a press or tap, and a platform MUST NOT retry a signature automatically.
+- **UP anchor.** The UP anchor is volatile state of the context, set by §7.7 step 19. Every command of the context other than GetInfo, status-mode GetState, and a Sign, UploadBegin, UploadChunk or UploadEnd whose Ticket is linked to the anchor, clears it, and so does zeroization (§8.8). A user action is therefore inherited at most once and only by the request that immediately follows the signature it was collected for: one user action yields at most two signatures, the second a kind 4 message of the same slot whose Ticket the enterprise linked to the first.
 - Reset (`hold_ms` = 5000) always requires the sensor to be held; an NFC tap never satisfies it.
 - While waiting, the authenticator stays in the current command and reports progress as the transport defines (CTAPHID keepalive, §11.2; status polling over NFC, §11.3, and CCID, §11.4).
 - The effective wait window is min(30 s, remaining context time). Sign / UploadEnd is itself a use of the token, so the UP wait is unaffected by the initial usage time limit. If the user does not touch within 30 s, `USER_ACTION_TIMEOUT` is returned and the token remains valid; the platform MAY start the signature again without asking for the PIN again.
@@ -908,15 +913,17 @@ The authenticator performs the following steps:
 2. Decode `[body_bstr, keyId_tstr, signature_b64]` per §6.1.
 3. Look up keyId in the `roles` of the installed TrustConfig; if not found, return `TICKET_INVALID`.
 4. Verify `"VCAP-SIGN\0" ‖ body_bstr` with that role public key; on failure return `TICKET_INVALID`.
-5. Decode `body = [1, kind, signerKeyRef_b32, signCounter, originalDigest_b32, originalLength]`; if the version is not 1, return `INVALID_PARAMETER`.
+5. Decode `body = [1, kind, signerKeyRef_b32, signCounter, originalDigest_b32, originalLength, ?linkedDigest_b32]`; if the version is not 1, return `INVALID_PARAMETER`. A body with the seventh element (a **linked Ticket**) is valid only on an authenticator that implements group member signing and only with `kind` 4; otherwise return `INVALID_PARAMETER`.
 6. If `body.kind ≠ request kind`, return `TICKET_INVALID`.
 7. Let owner be the slot's owner; if the role's `capabilityMask` does not contain `bit(8·(owner−1) + (kind−1))`, return `TICKET_INVALID` (valid combinations in Appendix B).
 8. If `signCounter ≠ the slot's signature counter + 1` (with overflow check), return `TICKET_INVALID`.
 9. Compute KeyRef per §6.3 using the **actual signing public key** (old.next for ROT, current otherwise); if `signerKeyRef ≠ KeyRef`, return `TICKET_INVALID`.
 10. If `originalLength ∉ 1..limit(kind)`, return `INVALID_LENGTH`.
-11. Store the Ticket and its verification result.
+11. Store the Ticket and its verification result, including `linkedDigest`, if present.
 
 The Ticket binds the remaining facts indirectly. KeyRef binds the device, reset epoch, slot, owner and actual signing key. The signature counter binds the Ticket to exactly one signature of that slot. The message digest, the length and the parser bind the AID, seq, said and prior.
+
+A linked Ticket is otherwise an ordinary Ticket. `linkedDigest` decides only whether the request takes over the UP of the signature made immediately before it (§8.2 step 1); without a matching UP anchor the request collects a new user action.
 
 The authenticator keeps no record of used Tickets: the signature counter makes every Ticket single-use, since a committed signature advances the counter and invalidates every Ticket issued for the same or an earlier value. A Ticket is independent of the context, so it remains usable across disconnection, PIN errors and new contexts until the slot's next signature. It carries no time limit (§13.2). It is checked against the TrustConfig installed when it is used, so an UpdateTrustConfig that removes its role, changes the role's public key or withdraws its capability bit invalidates it, and one that keeps them does not (§7.12).
 
@@ -1050,7 +1057,7 @@ Rules:
 The authenticator performs the following steps:
 
 1. Clear the fragment buffer and pending response.
-2. Clear the upload, the signing state (including every intermediate value and key copy) and the parser.
+2. Clear the upload, the signing state (including every intermediate value and key copy), the parser and the UP anchor (§8.2).
 3. Clear the token, permissions, key agreement private key, shared secret and contextId.
 4. Release the context's binding to its transport.
 
@@ -1091,18 +1098,21 @@ extensions = [* bstr32]
 ticket = [body_bstr, keyId_tstr, signature_b64]            ; ≤ 512 bytes
          ; signature = Ed25519(role.public, "VCAP-SIGN\0" ‖ body)
 body   = [1, kind, signerKeyRef_b32, signCounter,
-          originalDigest_b32, originalLength]
+          originalDigest_b32, originalLength, ?linkedDigest_b32]
 ```
 
 | Field | Description |
 |---|---|
-| kind | 1..5, or 7..9 with group member signing |
+| kind | 1..5, or 6..8 with group member signing |
 | signerKeyRef | §6.3, computed over the actual signing public key |
 | signCounter | The slot's signature counter value after this signature, i.e. the current value + 1 |
 | originalDigest | H(message) |
 | originalLength | 1..limit(kind) |
+| linkedDigest | Optional; only with kind 4 on an authenticator that implements group member signing. The `originalDigest` of the member signature (kind 5, 6, 7 or 8, same slot, `signCounter` one lower) whose user action this signature takes over (§8.2 step 1) |
 
 The enterprise learns the slot's current signature counter from the last archived Signed (§9.4) or from a StateProof (§9.3). For several consecutive signatures on one slot it issues Tickets with consecutive counter values; each becomes usable once the previous one has been used.
+
+The enterprise issues a linked Ticket only for the coordination message (§12.9 items 5 and 6) of a member signature it approves in the same decision, with `signCounter` one above that signature's Ticket (VCAP-EI §7.21). A linked Ticket used without the preceding signature, or after another command, collects its own user action like any Ticket.
 
 ### 9.3 StateProof
 
@@ -1183,6 +1193,7 @@ Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0�
 | 0x33 | PIN_AUTH_INVALID | Command authentication with the token failed (§8.1) | Call getKeyAgreement again and obtain a token |
 | 0x36 | PUAT_REQUIRED | Missing context, token or authentication fields | Call getKeyAgreement / obtain a token first |
 | 0x38 | PIN_TOKEN_EXPIRED | Token or context deadline passed | Authorize again |
+| 0x3b | UP_REQUIRED | Over NFC, the tap of the current field session was already consumed by an earlier request (§8.2 step 2); the request was not executed | Ask the user to remove the authenticator and tap again; establish a new context in the new field session. Do not count it as a refusal by the user |
 | 0x7f | INTERNAL | RNG, cryptographic engine or invariant failure | Stop and report |
 | 0xf0 | INVALID_STATE | Lifecycle, slot or operation conditions not met | Query actual state with GetState |
 | 0xf1 | CONFIG_INVALID | TrustConfig envelope does not verify under the bound enterprise root (§7.11 step 3, §7.12 step 3) | Check that the TrustConfig was signed by this tenant's enterprise root key |
@@ -1194,17 +1205,17 @@ Status codes are the [CTAP status codes][ctap-errors] plus the VCAP codes 0xF0�
 | 0xf7 | UPLOAD_INVALID | Upload progress, final length / digest or phase error | Start over (new context) |
 | 0xf8 | CONFIG_MISMATCH | TrustConfig verifies, but its device, tenant or reset epoch differs from this device (§7.11 step 4, §7.12 step 4), or for UpdateTrustConfig it is not the successor of the installed configuration (§7.12 step 5) | Personalize: read the actual values with binding-mode GetState (§7.4.3) and issue a TrustConfig for them. UpdateTrustConfig: read the installed configurationDigest with GetState (§7.4.2) and obtain the successor of that configuration. Do not guess |
 
-Codes below 0xF0 are CTAP status codes with their CTAP meaning (BUSY is CTAP1_ERR_CHANNEL_BUSY, NO_SPACE is CTAP2_ERR_KEY_STORE_FULL and INTERNAL is CTAP1_ERR_OTHER). Codes 0xF0–0xF8 are VCAP-specific codes in the CTAP vendor range.
+Codes below 0xF0 are CTAP status codes with their CTAP meaning (BUSY is CTAP1_ERR_CHANNEL_BUSY, NO_SPACE is CTAP2_ERR_KEY_STORE_FULL, UP_REQUIRED is CTAP2_ERR_UP_REQUIRED and INTERNAL is CTAP1_ERR_OTHER). Codes 0xF0–0xF8 are VCAP-specific codes in the CTAP vendor range.
 
 ### 10.2 Context Zeroization on Error
 
-Except for `BUSY` and the `USER_ACTION_TIMEOUT` of Sign / UploadEnd described below, an error MUST zeroize the whole context (§8.8) when any of the following holds:
+Except for `BUSY`, the `USER_ACTION_TIMEOUT` of Sign / UploadEnd and the `TICKET_INVALID` of Ticket verification, both described below, an error MUST zeroize the whole context (§8.8) when any of the following holds:
 
 1. An upload is in progress when the error occurs; or
 2. The command is one of CreateIdentity, Sign, PrepareRotation, Personalize, UpdateTrustConfig, BindEnterprise, Reset, UploadBegin / Chunk / End; or
 3. The status code is one of PIN_AUTH_INVALID, PIN_TOKEN_EXPIRED, INTERNAL, RECOVERY_REQUIRED, TICKET_INVALID, CONFIG_INVALID, KEEPALIVE_CANCEL.
 
-When Sign or UploadEnd returns USER_ACTION_TIMEOUT, the authenticator clears the signing state, parser and upload state and keeps the context and token (§8.2). Other errors (for example `INVALID_PARAMETER` from GetState) keep the context. `BUSY` always keeps the current upload and context.
+When Sign or UploadEnd returns USER_ACTION_TIMEOUT, the authenticator clears the signing state, parser and upload state and keeps the context and token (§8.2). When Sign or UploadBegin returns `TICKET_INVALID` from Ticket verification (§7.7 step 5, §8.3), before any message byte is processed and before UP, and no upload was in progress, the authenticator clears the Ticket and signing state and keeps the context and token, so the platform can obtain a new Ticket (VCAP-EI §7.5) and sign without a new PIN entry; over NFC the tap of the field session is then still unconsumed. `TICKET_INVALID` at any later step (§7.7 steps 13 and 17, after the message or the UP) zeroizes the context as listed above. Other errors (for example `INVALID_PARAMETER` from GetState) keep the context. `BUSY` always keeps the current upload and context.
 
 ### 10.3 Status Codes and Commitment
 
@@ -1249,7 +1260,7 @@ VCAP uses the [CTAPHID binding of CTAP 2.3][ctap-usb] unchanged; a VCAP request 
 VCAP uses the [NFC binding of CTAP 2.3][ctap-nfc] unchanged, including the FIDO AID, command chaining, `GET RESPONSE` and status polling with [`NFCCTAP_GETRESPONSE`][ctap-nfc-getresponse]. The authenticator reassembles requests of at most 2048 bytes (§11.1). The following rules relate it to VCAP:
 
 - **Field session.** A field session begins when the authenticator is powered by the reader's field and ends when it leaves the field. The field session is one transport. `SELECT` of the FIDO AID and leaving the field both zeroize the context.
-- **Tap as UP.** Entering the field counts as one user action. The first UP-requiring request in the field session consumes it (§8.2 step 1); later UP-requiring requests in the same session wait for a sensor press. Reset never accepts the tap.
+- **Tap as UP.** Entering the field counts as one user action, and it is the only user action an ordinary operation can obtain over NFC. The first UP-requiring request in the field session consumes it (§8.2 step 2); a later UP-requiring request in the same session returns `UP_REQUIRED` at once, unless its Ticket is linked to the signature made immediately before it (§8.2 step 1). A platform therefore performs at most one UP-requiring operation per field session (two with a linked Ticket) and asks the user to tap again for the next, which needs a new context; to avoid a new PIN entry for each tap of one operation it MAY hold the PIN per §12.1 item 8. Reset never accepts the tap.
 - **Cancellation.** The platform cancels by ending the field session. A Cancel command (§7.3) between two commands remains available.
 - **Leaving the field during a command.** The command ends with power loss and no signature leaves the authenticator. If it had already committed persistent state (§8.7), the platform recovers per §12.3 in a new field session; an interrupted Reset is repeated in a new field session (§7.13.2).
 
@@ -1282,8 +1293,18 @@ The platform performs the following steps:
 3. Ask the user for the PIN and request, in one call, all permissions the operation needs (for example `READ|SIGN` for signing) with getPinUvAuthTokenUsingPinWithPermissions.
 4. Decrypt pinUvAuthToken to obtain the token. The PIN, pinHash, shared secret and token MUST NOT be logged; the PIN entered by the user MUST be cleared on completion, cancellation, backgrounding or unload.
 5. When token permissions, device identity or slot state need confirmation, check `authState.permissions` and slot state with GetState (with a challenge); for a normal signature, decide per §12.2 step 0.
-6. Reuse a valid token for subsequent commands; ask for the PIN again only after expiry, disconnection, permission escalation or revocation. A platform MUST NOT keep the token alive with idle background authentication or cache the PIN to renew it.
+6. Reuse a valid token for subsequent commands; ask for the PIN again only after expiry, disconnection, permission escalation or revocation. A platform MUST NOT keep the token alive with idle background authentication or cache the PIN to renew it, except as items 8 and 9 permit.
 7. A context whose token carries a VCAP permission is held (§5.3) and blocks other clients of the authenticator, including browsers performing WebAuthn sign-in. When the platform has no further operation to perform, it SHOULD release the context with Cancel (§7.3) or by closing the transport.
+8. **One operation over several transports.** Some operations the user confirms as one action need several contexts: over NFC every UP-requiring request after the first needs a new field session (§11.3), for example a batch of signatures, the two signatures of a group member without a linked Ticket (§12.9), a rotation that a group rotation requires first, or a configuration update followed by a signature. For such an operation the platform MAY hold the PIN the user entered for it and use it, without asking again, for getPinUvAuthTokenUsingPinWithPermissions in each further context of the same operation, if all of the following hold:
+   1. Before the PIN entry, the platform shows the user which operation the PIN covers and how many taps or connections it needs.
+   2. It holds the PIN only in memory, in a mutable buffer that it overwrites when it clears the PIN; never in an immutable string, a log, a crash report, swap-backed or persistent storage, or a backup; and it sends it only encrypted to the authenticator under Protocol Two.
+   3. It clears the PIN when the operation completes, fails or is cancelled, when the platform application leaves the foreground or the device locks, and at the latest 120 000 ms after the last successful token acquisition with it.
+   4. It requests with the held PIN only the permissions the remaining steps of the operation need, MANAGE only for the configuration updates the user confirmed under item 8.1, and never uses it for setPIN or changePIN.
+   5. It reuses the PIN only while every earlier verification of it in the operation succeeded. On any ClientPIN error, including `PIN_INVALID`, `PIN_BLOCKED`, `PIN_AUTH_BLOCKED` and `PIN_POLICY_VIOLATION`, it clears the PIN at once and stops the operation; the user decides whether to start again (§10.3).
+   6. When a transport ended while a PIN verification was in progress, it calls getPinRetries in the next context before reusing the PIN, and stops and informs the user if the count is lower than after the last successful verification, since an interrupted verification consumes an attempt (§13.3).
+
+   Holding the PIN under this item is not caching it in the sense of item 6: it ends with the operation and never renews authorization for a later one. The authenticator cannot distinguish a held PIN from a typed one, and none of its rules depend on the difference.
+9. **New PIN.** Immediately after a successful setPIN or changePIN in the same user interaction, the platform MAY use the new PIN for getPinUvAuthTokenUsingPinWithPermissions without asking for it again (§12.5 steps 4 and 5), and then clears it, or holds it under item 8 for the rest of the operation.
 
 After a PIN error (`PIN_INVALID`) the context has been zeroized; the platform MUST restart from step 2, first showing the user the balance from getPinRetries, and MUST NOT retry automatically.
 
@@ -1350,7 +1371,7 @@ The platform **MUST NOT** resend Sign, UploadEnd, CreateIdentity or PrepareRotat
 | 9 | Employee | CreateIdentity(WORK) → Sign(ICP, WORK) | 1 |
 | 10 | Employee | Sign(RPY, WORK): Agent end-role | 1 |
 
-Steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature.
+Steps 4–10 run in one context, so the employee enters the PIN once and touches the authenticator four times, once per signature; step 5 uses the PIN set in step 4 (§12.1 item 9).
 
 The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step 2, and MUST perform steps 2 and 3 with devices under its physical control. IT MUST NOT preset or upload employee private keys, and SHOULD NOT set the PIN: the device is handed to the employee in PERSONALIZED_NO_PIN, and step 4 takes place on the employee's platform. In step 7, the enterprise SHOULD recheck the onboarding approval, employee, device and reset epoch, configuration and recipient, and durably record the onboarding operation before creating the agent, to prevent duplicate onboarding. If the response is lost, it reconciles read-only against the CLIENT ICP, the Agent DIP and the mutual ownership, and does not rebuild the Agent when material is missing.
 
@@ -1405,9 +1426,9 @@ These procedures apply to an authenticator that implements group member signing.
 1. **Member AID.** The member is an ACTIVE WORK slot. Its own `icp` and, before a group `rot`, its own `rot` use kinds 1 and 3 as usual.
 2. **Group event.** The initiator's platform builds the group `icp`, `ixn` or `rot` from the members' network-accepted key states; every member signs exactly the same bytes. For `icp` and `rot` each member's entry in `k` is its slot's current key and its entry in `n` is `commit(next)` of its slot; for `rot`, a member that rotates its share first signs its own `rot` (kind 3), so that its new current key is the key its earlier commitment in the group's `n` named.
 3. **Own rotation.** A slot uses the same current key and next-key commitment in its own AID and in every group it belongs to, so its own `rot` changes its share in all of them. After it, the slot cannot sign a group `ixn`, `exn` or `rpy` until the group has an establishment event listing the new current key (§9.4), and it keeps its share of a group's prior next threshold only while its current key is the key that group's latest establishment event committed to. The enterprise therefore issues own ROT Tickets per §12.8 item 7.7, and a member of several groups coordinates its own rotation with the rotations of all of them.
-4. **Ticket and signature.** The platform requests a Ticket of kind 6 from the enterprise, which applies §12.8 item 7, and signs with Sign or the upload commands; one touch per signature. The platform encodes the indexed signature per §9.4, using the group's latest establishment event from the key state the enterprise used for the Ticket.
-5. **Coordination message.** The member sends the group event and its indexed signature to the other members in an `exn` with route `/multisig/icp`, `/multisig/ixn` or `/multisig/rot` and `i` equal to the member AID, signed under kind 4 with its own Ticket. A member signature on a group event therefore takes two touches.
-6. **Group messages.** An `exn` sent by the group AID, for example an IPEX `grant` of a credential the group issues, is signed by each member under kind 8 (GROUP_EXN, §8.5.3); a `rpy` of the group AID, for example `/end/role/add` for the group, under kind 5. The member encodes its signature per §9.4 and sends it to the other members in a `/multisig/exn` or `/multisig/rpy` `exn` under kind 4. A member cannot sign a group `exn` before it has signed one key event of that group (§8.5.3); for a credential the group issues, the group `ixn` that anchors the issuance satisfies this, since the member signs it before the `grant`.
+4. **Ticket and signature.** The platform requests a Ticket of kind 6 from the enterprise, which applies §12.8 item 7, and signs with Sign or the upload commands; one user action per signature, except as item 5 allows. The platform encodes the indexed signature per §9.4, using the group's latest establishment event from the key state the enterprise used for the Ticket.
+5. **Coordination message.** The member sends the group event and its indexed signature to the other members in an `exn` with route `/multisig/icp`, `/multisig/ixn` or `/multisig/rot` and `i` equal to the member AID, signed under kind 4 with its own Ticket. A member signature on a group event therefore takes two user actions, unless the enterprise issues the coordination message's Ticket linked to the member signature (§9.2, VCAP-EI §7.21): the platform then sends the coordination Sign immediately after the member's Sign, in the same context and with no other command between them except GetInfo and status-mode GetState, and it takes over the member signature's user action (§8.2 step 1), so the user touches or taps once. Over NFC without a linked Ticket the two signatures need two taps and two contexts (§11.3).
+6. **Group messages.** An `exn` sent by the group AID, for example an IPEX `grant` of a credential the group issues, is signed by each member under kind 8 (GROUP_EXN, §8.5.3); a `rpy` of the group AID, for example `/end/role/add` for the group, under kind 5. The member encodes its signature per §9.4 and sends it to the other members in a `/multisig/exn` or `/multisig/rpy` `exn` under kind 4, which, as in item 5, can carry a Ticket linked to the member signature. A member cannot sign a group `exn` before it has signed one key event of that group (§8.5.3); for a credential the group issues, the group `ixn` that anchors the issuance satisfies this, since the member signs it before the `grant`.
 7. **Completion.** The group event or message becomes valid once signatures meeting the group's thresholds are collected and, for an event, it is accepted by the group's witnesses. The enterprise reports these stages separately (§12.2 step 8).
 8. **Abandoned proposal.** When a group event does not reach its threshold and the members agree on a different event at the same sequence number, a member whose group record holds the abandoned event signs the replacement with GROUP_SUPERSEDE (kind 7), under a Ticket the enterprise issues per §12.8 item 7.5. A member whose record does not hold that sequence number signs the replacement with GROUP. When the group's witnesses have accepted a different event at a sequence number without this member's signature, a member whose record holds another event at that sequence number signs the accepted event the same way before it can sign the next event (§8.4.4 item 5). If that record's `replaced` is already set, because the member signed a replacement at that sequence number that the witnesses did not accept either, it cannot sign the accepted event and can next sign only an event at least two sequence numbers above its record; this needs three different events at one sequence number. An abandoned `icp` names a different group AID than its replacement and therefore needs no replacement signature; when all of a slot's group records are in use, a later group `icp` reuses the record of an abandoned inception under GROUP_SUPERSEDE (§8.4.4 item 6), and otherwise the record remains until Reset.
 9. **Recovery.** A lost response is reconciled per §12.3 (group signatures).
@@ -1416,9 +1437,9 @@ These procedures apply to an authenticator that implements group member signing.
 
 **Platform.**
 
-1. Obtain from the enterprise the successor of the configuration the authenticator reports (VCAP-EI §7.20). Tell the user that the enterprise configuration of the authenticator will change and that the identities on it are kept.
-2. Establish a context with a token that includes MANAGE (§12.1) and call UpdateTrustConfig; the user touches once.
-3. Whatever the status code, determine the installed configuration only from the configurationDigest of a new StateProof (§10.3), and report that StateProof to the enterprise. Repeat from step 1 while the enterprise has a further successor.
+1. Obtain from the enterprise the successor of the configuration the authenticator reports (VCAP-EI §7.20). The platform MAY ask for it before it connects the authenticator, with the configurationDigest of the last StateProof it verified, so that the user decides before the PIN entry; it then confirms with GetState in the context that the authenticator still reports that digest before calling UpdateTrustConfig. Tell the user that the enterprise configuration of the authenticator will change and that the identities on it are kept.
+2. Establish a context with a token that includes MANAGE (§12.1) and call UpdateTrustConfig; the user touches or taps once.
+3. Whatever the status code, determine the installed configuration only from the configurationDigest of a new StateProof (§10.3), and report that StateProof to the enterprise. After a success without forcePINChange the context remains (§7.12 step 10) and the platform obtains the StateProof in it; otherwise it obtains it in a new context. It MAY defer the StateProof to the next context it establishes for another purpose, for example the next signature, and report it then; until the enterprise receives it, the enterprise treats the device as possibly holding either configuration (enterprise item 2). Repeat from step 1 while the enterprise has a further successor. Over NFC each further UpdateTrustConfig needs a new tap (§11.3); the platform MAY hold the PIN for the chain the user confirmed (§12.1 item 8).
 4. If forcePINChange is set afterwards, ask the user to change the PIN (§7.2).
 
 **Enterprise.** The enterprise MUST:
@@ -1439,7 +1460,7 @@ The update keeps KeyRef, AIDs and signature counters, so the archived heads and 
 | Threat | Guarantee | Assumptions and limits |
 |---|---|---|
 | Platform copies private keys through the normal interface | Keys are generated inside the authenticator and the interface has no export | Invasive physical extraction, fault injection and side channels are out of scope |
-| Platform silently produces new signatures | Requires a SIGN token, a valid Ticket and a new UP | A touch or tap proves presence, not that the content was seen |
+| Platform silently produces new signatures | Requires a SIGN token, a valid Ticket and a new UP; over NFC a tap satisfies one request only | A touch or tap proves presence, not that the content was seen. A linked Ticket takes over the UP of the member signature made immediately before it, so one user action yields at most two signatures, the second a coordination message the enterprise linked to the first (§8.2) |
 | Enterprise signs unilaterally | Role keys only issue Tickets; signing requires the in-authenticator private key and UP | Relies on trusted firmware |
 | Employee bypasses enterprise policy | No Ticket, no signature | |
 | Rotation to a platform-generated key | k / n / newNext are constrained to in-authenticator keys, and rot is signed with the in-authenticator old.next | Covers rotation only; other forms of long-term takeover are addressed by the enterprise controls of §12.8 |
@@ -1452,7 +1473,7 @@ The update keeps KeyRef, AIDs and signature counters, so the archived heads and 
 
 1. **Induced signing:** UP confirms presence only, so the authenticator cannot tell whether the user was induced to sign a well-formed but malicious message. Independent enterprise approval of the message, recipients, attachments, route, receiving domain and deadline is required.
 2. **Delayed use of a Ticket:** a Ticket carries no time limit. An issued but unused Ticket remains usable until the slot's next signature, so a compromised platform holding one could sign the approved message later (still needing a PIN token and a user action). The content cannot change, KEL Tickets are bound to the head, and EXN / RPY carry their own validity (`dt`) that recipients check. To revoke an unused Ticket, the enterprise has another signature made on the slot, has an UpdateTrustConfig installed that removes the Ticket's role or capability (§7.12), or Resets the authenticator. An enterprise window for unused Tickets (VCAP-EI §9.3 item 2) limits when the enterprise hands out a Ticket and dispatches the resulting message; it does not limit archiving (§12.8 item 8).
-3. **NFC tap as UP:** over NFC the tap satisfies UP for one request per field session. A compromised platform that holds a valid PIN token and Ticket can use the user's next tap for its own request, just as it can use a sensor press; a tap also happens when the authenticator is left on a reader. Enterprise approval of the message content remains the control.
+3. **NFC tap as UP:** over NFC the tap satisfies UP for one request per field session. A compromised platform that holds a valid PIN token and Ticket can use the user's next tap for its own request, just as it can use a sensor press; a tap also happens when the authenticator is left on a reader. A further UP-requiring request in the same field session is refused with `UP_REQUIRED`, so one tap never yields more than one signature, or two with a linked Ticket (item 12). Enterprise approval of the message content remains the control.
 4. **FIDO credentials:** the authenticator also holds FIDO credentials for WebAuthn sign-in. They share the PIN and the device but not keys or attestation with VCAP (§7.14), so a relying party cannot link a FIDO credential to the device's VCAP attestation identity.
 5. **Slot allocation without a Ticket:** CreateIdentity needs a PIN token but no Ticket, so a compromised platform can take UNUSED slots until the next Reset; Sign still needs a Ticket. Enterprises detect unexpected slots from StateProofs (§12.8).
 6. **Web pages:** this document defines no route by which a web page reaches the VCAP operations. An enterprise web application works through a platform client that implements this document, so the PIN, the context and the Outbox stay on the platform (§12.1, §12.2).
@@ -1460,7 +1481,9 @@ The update keeps KeyRef, AIDs and signature counters, so the archived heads and 
 8. **Group records:** group records are released only by Reset, or for an abandoned inception by reuse under GROUP_SUPERSEDE (§8.4.4 item 6), so a slot takes part in at most `GROUP_RECORDS` group AIDs at a time; enterprises SHOULD approve a member signature on a group `icp` only after all members have agreed on its bytes. Because a slot signs only at increasing sequence numbers of a group, one signature on an event far ahead of the group's accepted state, approved in error or by a compromised role key, keeps the slot from signing the group's lower sequence numbers until Reset; §12.8 item 7.2 therefore approves only `s` = accepted sequence + 1. Each record needs a Ticket, so only the enterprise can consume them. GROUP_SUPERSEDE lets a member sign a second event, and never a third, at a sequence number it has already signed; an attacker who holds a role key with bit 14, a PIN token and a user touch can thereby add this member's signature to a competing event. The enterprise confines bit 14 to a separately controlled role key (§12.8 item 7.5) and audits `supersedeCount`.
 9. **Binding mode disclosure:** before the PIN is set, any host the authenticator is connected to can obtain a signed BindingProof carrying the persistent device identifier, the tenant and the reset epoch, and the attestation certificate chain, which also names the manufacturer and anything the manufacturer puts in the certificates. Manufacturers SHOULD NOT place per-customer data in attestation certificates. This lets such a host identify the device and its enterprise. Binding mode is unavailable in PIN_READY, which is the normal state in an employee's hands. After a Reset the device is in STOCK_UNBOUND and discloses only the device identifier and the certificate chain.
 10. **Residual data after Reset:** Reset deletes secrets logically and does not overwrite or erase the storage medium (§7.13.3), and ROT does not destroy pre-rotation keys (§8.7 rule 6). An attacker able to read the raw non-volatile storage of the authenticator, outside its interfaces, may therefore recover private keys and the PIN check value of earlier reset epochs. VCAP relies on the authenticator's secure storage for this. Keys recovered this way still need a Ticket to be used through an authenticator, but can sign outside one, so an enterprise MUST deactivate the AIDs of a lost or reset authenticator (§12.7 step 1) and not rely on Reset alone.
-11. **Configuration update:** UpdateTrustConfig requires the enterprise root signature, a MANAGE token and a touch. A party holding the enterprise root key can therefore install role keys of its choice on a device whose holder enters the PIN and touches; this is the reach the root key already has at Personalize, and every signature under such a role still needs a Ticket, a SIGN token and a touch. Withdrawing a role by update takes effect only when the holder installs it (§12.10), so the enterprise's refusal to issue Tickets remains the immediate control. The enterprise root key SHOULD be kept offline.
+11. **Configuration update:** UpdateTrustConfig requires the enterprise root signature, a MANAGE token and a touch. A party holding the enterprise root key can therefore install role keys of its choice on a device whose holder enters the PIN and touches; this is the reach the root key already has at Personalize, and every signature under such a role still needs a Ticket, a SIGN token and a touch. Withdrawing a role by update takes effect only when the holder installs it (§12.10), so the enterprise's refusal to issue Tickets remains the immediate control. The enterprise root key SHOULD be kept offline. A successful update keeps the context unless it sets forcePINChange (§7.12 step 10), so a platform that holds a MANAGE token can install a further successor in the same context; each still needs its own root signature, the next `sequence` and a new UP.
+12. **Linked Tickets:** a role key that can issue kind 4 Tickets can link one of them to a member signature, so that the coordination message takes over that signature's user action (§8.2 step 1). A compromised platform holding a linked Ticket gains no signature beyond the one the enterprise linked, and only immediately after the linked signature in the same context; a compromised role key could already issue a Ticket for any message of its capability. The enterprise issues a linked Ticket only for the coordination message of a member signature it approves in the same decision (VCAP-EI §7.21, §9.3).
+13. **PIN held for one operation:** under §12.1 item 8 the platform keeps the PIN in memory during one confirmed operation, for at most 120 s after its last use. Malware that can read the platform's memory in that time obtains the PIN, as it could while the user types it; the limits of §12.1 item 8 confine the exposure to that operation and keep an interrupted verification from consuming attempts unnoticed.
 
 ### 13.3 PIN
 
@@ -1493,7 +1516,9 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | Reset power-up window | 10 000 ms |
 | UP debounce (release) | 30 ms |
 | UP hold duration | Ordinary 30 ms (hold 0); Reset 5000 ms |
-| NFC tap as UP | At most one UP-requiring request per field session; never for Reset; no tap over USB HID or CCID |
+| NFC tap as UP | At most one UP-requiring request per field session; a further one returns `UP_REQUIRED` (a linked Ticket excepted, §8.2 step 1); never for Reset; no tap over USB HID or CCID |
+| Linked Ticket | Kind 4 only; takes over the UP of the immediately preceding kind 5–8 signature of the same slot in the same context, at most once (group member signing only) |
+| PIN held by the platform for one operation | At most 120 000 ms after its last successful use (§12.1 item 8) |
 | PIN length | 1..63 bytes; minPinChars 4..63 |
 | Number of slots | 4 |
 | GROUP_RECORDS | 2 per slot (group member signing only) |
@@ -2015,7 +2040,7 @@ Uses the E.0 inputs and in addition the seed labels member2-current, member2-nex
 
 ### E.12 UpdateTrustConfig
 
-Uses the E.0 inputs, including pinUvAuthToken, and the contextId of E.1. The configuration of E.3 (sequence 0) is installed; the successor grants role `ops` all bits of Appendix B and is used by E.11.
+Uses the E.0 inputs, including pinUvAuthToken, and the contextId of E.1. The vector assumes a stored PIN of at least 6 code points, the successor's `minPinChars`, so forcePINChange stays clear and the context and token remain valid after the update (§7.12 step 10). The configuration of E.3 (sequence 0) is installed; the successor grants role `ops` all bits of Appendix B and is used by E.11.
 
 body = [1, device, tenant, 0, sequence 1, prior = configurationDigest of E.3, ownerMask 0x03, minPinChars 6, [['ops', 0xFF03, rolePublic]], []]
 
@@ -2049,6 +2074,36 @@ body = [1, device, tenant, 0, sequence 1, prior = configurationDigest of E.3, ow
   ```
 - **request length:** `265`
 
+### E.13 Linked Ticket
+
+Continues E.11 on an authenticator that implements group member signing. Slot 0 has just signed the group `icp` under kind 6 (signCounter 2) in this context, which collected a new user action and set the UP anchor to (slot 0, group icp originalDigest, 2). The coordination `exn` that carries the group `icp` to the other member is signed next, under kind 4 with a Ticket linked to the group icp (signCounter 3); it takes over the user action (§8.2 step 1). The exn is a skeleton: KERI defines further members of `a` (for example the member lists), and the embed block carries its own SAID `d`. This vector is an alternative continuation of E.11: in E.11 signCounter 3 is used by the GROUP_EXN instead.
+
+- **coordination exn (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON0002df_","t":"exn","d":"EJU3KvdDWId9krPfly4ZGFBPvrzIhY7F9IkSD7o5QXUh","i":"EB2eq33B7j9u7XfqHPiYnLGARWwPx0oZjip3UWV7Maz2","rp":"","p":"","dt":"2026-11-07T00:00:00.000000+00:00","r":"/multisig/icp","q":{},"a":{"gid":"EM2TdSwxvjAHGsmspmFQ5W0bPQhM42Iqk0SIEKw9kvqf"},"e":{"d":"EM-fintn_eVvJvZzv3atNdDJ_2tfwxylqbvHREmRbkZE","icp":{"v":"KERI10JSON000189_","t":"icp","d":"EM2TdSwxvjAHGsmspmFQ5W0bPQhM42Iqk0SIEKw9kvqf","i":"EM2TdSwxvjAHGsmspmFQ5W0bPQhM42Iqk0SIEKw9kvqf","s":"0","kt":"2","k":["DM0t56NsKkKaFoctzRj3CNrTXiMY_j-BV3JtJIeFWZF_","DGphn1oB2G1Wm5NoEPxUdlOLVQdt_O_6Bmsgc5i0m4kV"],"nt":"2","n":["EOyxjcMz4XHUq4xLA1NMzKVtNBIxhS17WxH9tuBMHT-d","ECe3wQz8UTOFqa6dNnwbc9mQdImudKxh_ZA9maY_pW0M"],"bt":"0","b":[],"c":[],"a":[]}}}
+  ```
+- **coordination exn length:** `735`
+- **coordination exn originalDigest:** `906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b7`
+- **linkedDigest (= group icp originalDigest of E.11):** `ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd`
+- **linked Ticket body (kind 4, signCounter 3):**
+
+  ```
+  87010458207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4035820906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b71902df5820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd
+  ```
+- **linked Ticket envelope:**
+
+  ```
+  83586d87010458207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d4035820906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b71902df5820ddb622799426f8c6c0468e5dcc6a68f6626b44c8e8cc1aa6df3b3b2690dc7ddd636f70735840def32126058635ed897910bdb3093c6fa19ec50238360cc3d515d81d7981e4f035a312f31a0d4f48ace1b92f1bb96b7590e9f0dbd62ee28c7f7497b9a47ba70f
+  ```
+- **Signed (coordination exn):**
+
+  ```
+  a50158408d1fac7cc1747dbde37f7ff57d3173144912c3a5fb21d893d4b857dbbcf43f89f264f0df6c9f0cac271afb2d8bad927603d873703d7f4a67f7493939156e8c000258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b8915035820906b086c66a8aa3ee1641dd5ddec466aa16a6d30447a49c64795e3beddc034b7041902df0503
+  ```
+
+Negative cases (Appendix E JSON `negative`): a seven-element Ticket body with a kind other than 4 returns `INVALID_PARAMETER`; a linked Ticket whose `linkedDigest` names no UP anchor of the context collects a new user action, which over NFC after the tap was consumed returns `UP_REQUIRED`.
+
 ## Appendix F Change Control
 
 This document follows these rules from the Candidate onward:
@@ -2061,3 +2116,11 @@ This document follows these rules from the Candidate onward:
 **Change log.**
 
 - **14 November 2026.** Candidate Specification; first published version.
+- **15 November 2026.** Revision of the Candidate, resolving usability findings on PIN entries and user actions:
+  - Over NFC the tap is the only user action for ordinary operations: a second UP-requiring request in a field session returns the new status `UP_REQUIRED` (0x3B, CTAP2_ERR_UP_REQUIRED) at once instead of waiting for the sensor (§8.2 step 2, §10.1, §11.3, Appendix A).
+  - Linked Tickets: an optional seventh Ticket body element `linkedDigest` lets a kind 4 coordination message take over the user action of the member signature made immediately before it in the same context (§§ 2.1, 7.0, 7.7, 8.2 step 1, 8.3, 8.8, 9.2, 12.9, 13.1, 13.2 item 12, Appendix A, E.13).
+  - A successful UpdateTrustConfig closes the context only when it sets forcePINChange (§§ 5.3, 7.0, 7.12, 12.10, 13.2 item 11).
+  - `TICKET_INVALID` from Ticket verification, before any message byte and before UP, keeps the context and token (§§ 7.7, 10.2).
+  - A platform may hold the PIN in memory for one confirmed operation that needs several contexts, within fixed limits, and may use a newly set PIN at once (§12.1 items 8 and 9, §13.2 item 13).
+  - The platform may look up a configuration successor before connecting the authenticator and may defer the confirming StateProof to its next context (§12.10).
+  - Erratum: §9.2 listed Ticket kinds 7..9 for group member signing; they are 6..8.
