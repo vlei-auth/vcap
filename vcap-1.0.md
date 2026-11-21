@@ -1,6 +1,6 @@
 # vLEI Client to Authenticator Protocol (VCAP) 1.0
 
-*Candidate Specification — 20 November 2026*
+*Candidate Specification — 21 November 2026*
 
 **Specification identifier:** VCAP-1.0  
 **URL:** https://vlei-auth.github.io/vcap/  
@@ -18,7 +18,7 @@
 
 ## Status of this document
 
-This is a **Candidate Specification** of VCAP 1.0, dated 20 November 2026. Its features are frozen: until it becomes final it changes only to correct errors, remove ambiguity, or resolve findings of the review below, and every such change is listed in the change log. It becomes the final 1.0 when (1) at least one Enterprise Service and one Platform, written independently of each other's code, pass the VAF conformance tests including VAF BASE-T15–T20 on real authenticators; (2) an implementation written only from these documents reproduces the test vectors of VCAP Appendix E and completes a signature and its archiving; and (3) an independent security review of VCAP and VAF has been completed and its findings resolved. Comments and errata are submitted as issues at <https://github.com/vlei-auth/vcap/issues>.
+This is a **Candidate Specification** of VCAP 1.0, dated 21 November 2026. Its features are frozen: until it becomes final it changes only to correct errors, remove ambiguity, or resolve findings of the review below. It becomes the final 1.0 when (1) at least one Enterprise Service and one Platform, written independently of each other's code, pass the VAF conformance tests including VAF BASE-T15–T20 on real authenticators; (2) an implementation written only from these documents reproduces the test vectors of VCAP Appendix E and completes a signature and its archiving; and (3) an independent security review of VCAP and VAF has been completed and its findings resolved. Comments and errata are submitted as issues at <https://github.com/vlei-auth/vcap/issues>.
 
 ## License and Intellectual Property
 
@@ -65,7 +65,7 @@ Because both the platform and the enterprise services may be compromised, the au
 1. **Private keys stay in the authenticator.** No command imports or exports a private key.
 2. **Each signature needs the user.** Every signature requires the PIN-authorized platform and one deliberate user action (user presence, UP): a press of the touch sensor, or over NFC the tap that brings the authenticator into the reader's field. The PIN failure count is kept in the authenticator and survives power loss.
 3. **Every signature is authorized by the enterprise.** Each signature requires a Ticket issued by an enterprise role key. The Ticket specifies the slot's next signature counter, the signing key, and the digest and length of the message to be signed; each Ticket is usable for exactly one signature.
-4. **Rotation stays within authenticator-generated keys.** The current key and next key in `icp` are two keys generated inside the authenticator. A `rot` is signed with the previously committed next key, and the newly committed next key is freshly generated inside the authenticator. Even if the platform and the enterprise services are both compromised, an attacker therefore cannot rotate the identity to a key outside the authenticator.
+4. **Rotation stays within authenticator-generated keys.** The current key and next key in `icp` are two keys generated inside the authenticator. A `rot` is signed with the previously committed next key, and the newly committed next key is freshly generated inside the authenticator. Even if the platform and the enterprise services are both compromised, an attacker therefore cannot use the authenticator to rotate the identity to a key outside it. A WORK AID MAY in addition carry an enterprise recovery commitment, which lets the holder of the enterprise recovery key rotate the AID without the authenticator (§12.11, §13.2 item 15).
 5. **Events advance one at a time.** Events in a slot advance strictly in sequence (sequence number `s` incremented by 1, `p` referencing the previous event), so with intact persistent state each slot produces at most one event per sequence number. On an authenticator that implements group member signing (§8.4.4), a slot signs, for each group AID it takes part in, only at increasing sequence numbers and at most one event per sequence number, except for at most one explicitly authorized replacement per sequence number.
 6. **Each signature is committed once.** A signature is durably committed in the authenticator before it is returned to the platform. The signature of the latest key event, the most recent signature of the slot and the signature held in each of its group records remain retrievable with Recover, so a lost response yields the original signature rather than a new one. The authenticator does not retain any message. After a successful Reset, the PIN record and all private keys of the old reset epoch are deleted and can no longer be used through any interface of the authenticator (§13.2 item 10).
 
@@ -73,7 +73,7 @@ This document specifies the authenticator state model, the parameters and proces
 
 ### 1.2 Scope
 
-This document defines the interface between the authenticator and the platform, and the format of enterprise-signed objects consumed by the authenticator. The internal protocols of enterprise gateways, KERIA, witnesses and wallets are out of scope; Section 12 states only their requirements for using authenticator output. The interface between platforms and the enterprise service (Ticket requests, archiving and recovery) is specified by the companion [VCAP Enterprise Interface 1.0](https://vlei-auth.github.io/vcap-ei/).
+This document defines the interface between the authenticator and the platform, and the format of enterprise-signed objects consumed by the authenticator. The internal protocols of enterprise gateways, KERIA, witnesses and wallets are out of scope; Section 12 states only their requirements for using authenticator output. The interface between platforms and the Enterprise Service (Ticket requests, archiving and recovery) is outside this document; VAF states the obligations of both parties.
 
 The VCAP operations are reachable as native CTAP vendor commands (§7.3–§7.12) over the transports of Section 11. VCAP 1.0 defines no other route.
 
@@ -88,8 +88,8 @@ The key words "**MUST**", "**MUST NOT**", "**REQUIRED**", "**SHOULD**", "**SHOUL
 | Class | Implements | Sections that apply |
 |---|---|---|
 | **Authenticator** | Firmware and hardware of the authenticator | §§ 5–11, Appendices A and B |
-| **Platform** | Software that sends VCAP commands: wallets, IT tools, manufacturing tools | §§ 6, 9, 10, 11 (as sender), 12.1–12.7 and 12.10; 12.9 when it uses group member signing |
-| **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7, 12.8, 12.10, Appendix D; 12.9 when it issues group Tickets |
+| **Platform** | Software that sends VCAP commands: wallets, IT tools, manufacturing tools | §§ 6, 9, 10, 11 (as sender), 12.1–12.7, 12.10 and 12.11; 12.9 when it uses group member signing |
+| **Enterprise service** | Ticket issuer, archive and enrollment service | §§ 6, 9, 12.5, 12.7, 12.8, 12.10, Appendix D; 12.9 when it issues group Tickets; 12.11 when it uses recovery commitments |
 | **Manufacturer** | Producer of the attestation identity | Appendix D.1, D.5; D.3 when it delivers enrollment packages |
 
 An Authenticator implements at least one transport of Section 11 and declares in GetInfo `transports` exactly the transports it implements (§7.1). The following features are optional; an Authenticator that implements one implements all of its requirements:
@@ -284,6 +284,7 @@ UNUSED ────────────────▶ CREATED ────�
                                                           │  │   │   next←newNext, prepared deleted
                                                           └──┘◀──┘
                               PrepareRotation (WORK only): sets prepared, head unchanged
+                              Adopt (WORK only): CREATED ─▶ ACTIVE, head = adopted rot
                               Reset: all four slots are deleted (new reset epoch)
 ```
 
@@ -294,7 +295,9 @@ UNUSED ────────────────▶ CREATED ────�
 | ACTIVE | 1 or 2 | present | WORK only, optional | present | ≥ 1 | present |
 
 - Any mix of owners is permitted, including four WORK slots. Slots are independent of one another and hold no receipts or pending events. A slot keeps its identity until Reset, which deletes all slots together.
-- A CLIENT slot permits ICP / IXN; a WORK slot permits ICP / IXN / ROT / EXN / RPY.
+- A CLIENT slot permits ICP / IXN; a WORK slot permits ICP / IXN / ROT / EXN / RPY, and Adopt (§7.15) while CREATED.
+- A WORK slot MAY hold a **recovery commitment** `recoveryDigest`: a 44-byte `E` digest that the slot's latest establishment event carries as the second entry of `n` (§8.4.2 item 6). The authenticator holds no key for it. It is set by the slot's ICP or by Adopt, is carried unchanged by each ROT unless the Ticket's role key has capability bit 17 (Appendix B), and is deleted by Reset.
+- A slot that became ACTIVE through Adopt has head kind ADOPT until its first ROT. In that state the AID's current key is the enterprise recovery key, not a slot key, and the slot permits only ROT (§7.7 step 6).
 - When `prepared` exists, a further PrepareRotation returns the existing preparation unchanged.
 - `signCounter` is a persistent per-slot signature counter. It starts at 0 and is incremented by one in the atomic commit of every signature of any kind (§8.7); it never decreases within a reset epoch. Each Ticket names the counter value its signature will receive (§9.2), so each Ticket is usable once.
 - On an authenticator that implements group member signing, an ACTIVE WORK slot additionally permits GROUP, GROUP_SUPERSEDE, GROUP_EXN and GROUP_RELEASE (§7.7) and owns zero or more **group records**, one per group AID it has signed for. A group record holds `groupAid`, the owning slot, the event type `t`, `seq`, `said`, `prior` (the event's `p`, or null for `icp`), `originalLength`, `originalDigest`, the original signature, `actualPublic`, `signCounter`, `replaced` (whether the recorded event replaced another event at the same `seq`) and `supersedeCount` (the number of replacements over the record's lifetime). A group AID has a record in at most one slot.
@@ -381,7 +384,7 @@ contextId  = H("VCAP-CONTEXT\0" ‖ keyAgreement.x)   ; the authenticator's keyA
 
 The enterprise identifier is a string chosen by the enterprise: 1..128 bytes of UTF-8 in Unicode Normalization Form C. An enterprise that has an LEI SHOULD use its LEI (ISO 17442: 20 uppercase alphanumeric characters).
 
-`actualPublic` is **the public key actually used for this signature**: current for ICP / IXN / EXN / RPY / GROUP / GROUP_SUPERSEDE / GROUP_EXN, and old.next for ROT. The authenticator computes KeyRef from its own verified slot state and MUST NOT use a KeyRef or digest supplied by the platform.
+`actualPublic` is **the public key actually used for this signature**: current for ICP / IXN / EXN / RPY / GROUP / GROUP_SUPERSEDE / GROUP_EXN, old.next for ROT, and next for ADOPT. The authenticator computes KeyRef from its own verified slot state and MUST NOT use a KeyRef or digest supplied by the platform.
 
 ### 6.4 Cryptographic Primitives
 
@@ -436,6 +439,7 @@ Command codes `0x00`–`0x3F` are the [CTAP command codes][ctap-commands] and ar
 | 0x51 | CreateIdentity | `{1:slot,2:owner,3:challenge_b32}` | READ+MANAGE | No | StateProof | No |
 | 0x53 | Sign | `{1:slot,2:kind,3:ticket_bstr,4:original_bstr}` | SIGN | **Yes** | Signed | No |
 | 0x54 | PrepareRotation | `{1:slot,2:challenge_b32}` | READ+SIGN | No | StateProof | No |
+| 0x55 | Adopt | `{1:slot,2:ticket_bstr,3:original_bstr,4:challenge_b32}` | READ+SIGN | **Yes** | StateProof | No |
 | 0x56 | Recover | `{1:slot,2:originalDigest_b32}` | READ | No | Signed (original signature) | No |
 | 0x57 | Cancel | `{}` | None (owning transport only) | No | Empty | Yes |
 | 0x60 | Personalize | `{1:trustConfigEnvelope_bstr}` | None; requires context + enterprise root signature | **Yes** | Empty | Yes |
@@ -649,7 +653,7 @@ The authenticator performs the following steps (**BEGIN phase**):
 3. If not personalized, return `INVALID_STATE`.
 4. Read the slot's persistent state and verify its integrity (including keys and, where needed, prepared); on failure return `RECOVERY_REQUIRED`.
 5. Verify the Ticket per §8.3, obtaining `originalLength`, `originalDigest`, `signCounter` and, for a linked Ticket, `linkedDigest`.
-6. If `kind` is not allowed for the slot's owner (column "Allowed owner" above), return `OPERATION_DENIED`. Check that the authenticator can hold the state this signature would commit (§8.7; otherwise `NO_SPACE`). If `kind` is a KEL kind (1..3), perform the key event pre-checks of §8.4.1. If `kind` is 6 or 7, require the slot to be ACTIVE (else `INVALID_STATE`) and select the group event checks of §8.4.4. If `kind` is 8 or 9, require the slot to be ACTIVE (else `INVALID_STATE`) and select the check of §8.5.3 or §8.5.4. Otherwise, require the slot to be ACTIVE (else `INVALID_STATE`) and select the corresponding format check of §8.5.
+6. If `kind` is not allowed for the slot's owner (column "Allowed owner" above), return `OPERATION_DENIED`. If the slot's head kind is ADOPT (§7.15) and `kind` is not 3, return `INVALID_STATE`. Check that the authenticator can hold the state this signature would commit (§8.7; otherwise `NO_SPACE`). If `kind` is a KEL kind (1..3), perform the key event pre-checks of §8.4.1. If `kind` is 6 or 7, require the slot to be ACTIVE (else `INVALID_STATE`) and select the group event checks of §8.4.4. If `kind` is 8 or 9, require the slot to be ACTIVE (else `INVALID_STATE`) and select the check of §8.5.3 or §8.5.4. Otherwise, require the slot to be ACTIVE (else `INVALID_STATE`) and select the corresponding format check of §8.5.
 7. Select the signing seed: old.next for ROT, current otherwise.
 8. Prepare to sign with the selected key (§8.6).
 9. Confirm again that the transport is still connected and no deadline has passed.
@@ -684,7 +688,7 @@ The authenticator performs the following steps:
 1. Authenticate per §8.1 (READ).
 2. If slot is out of range, return `INVALID_PARAMETER`.
 3. Read the slot's persistent state; if corrupted, return `RECOVERY_REQUIRED`; if not ACTIVE, return `NOT_FOUND`.
-4. If `originalDigest = lastSigned.originalDigest`, select lastSigned; otherwise, if `originalDigest = latest.originalDigest`, select latest; otherwise, if an active group record owned by the slot has `originalDigest` equal to it, select that group record; otherwise return `NOT_FOUND`.
+4. If `originalDigest = lastSigned.originalDigest`, select lastSigned; otherwise, if `originalDigest = latest.originalDigest` and latest's kind is not ADOPT, select latest; otherwise, if an active group record owned by the slot has `originalDigest` equal to it, select that group record; otherwise return `NOT_FOUND`.
 5. Confirm that the context and token are still valid and the transport is still connected.
 6. Return `{1:selected.originalSignature, 2:selected.actualPublic, 3:selected.originalDigest, 4:selected.originalLength, 5:selected.signCounter}`.
 
@@ -850,6 +854,29 @@ These operations follow CTAP, with the following VCAP rules:
 6. **Reset.** Reset (§7.13) erases all FIDO credentials together with the KERI slots.
 7. **Signature counters.** FIDO credentials use their own signature counter. Creating or using a FIDO credential never changes a slot's `signCounter` (§5.2) or any other slot state, so WebAuthn sign-in does not affect the counters on which Tickets are based.
 
+### 7.15 Adopt (0x55)
+
+Places an existing WORK AID into a CREATED WORK slot, after the enterprise recovery key has rotated the AID to that slot's next key (§12.11). Adopt produces no signature.
+
+**Parameters:** `{1:slot, 2:ticket_bstr, 3:original_bstr, 4:challenge_b32, 254:2, 255:pinUvAuthParam_b32}`; `original` is the recovery `rot`, at most 1280 bytes. **Required permission:** READ+SIGN. **UP:** yes. **Ticket:** kind 10 (ADOPT). **Result:** StateProof.
+
+The authenticator performs the following steps:
+
+1. Authenticate per §8.1 (READ|SIGN).
+2. If `slot ∉ 0..3`, return `INVALID_PARAMETER`; if `len(original) ∉ 1..1280`, return `INVALID_LENGTH`.
+3. If not personalized, return `INVALID_STATE`.
+4. Read the slot's persistent state and verify its integrity; on failure return `RECOVERY_REQUIRED`. If the slot is not a CREATED WORK slot, return `INVALID_STATE`.
+5. Verify the Ticket per §8.3 with request kind 10; the Ticket's `signCounter` is therefore 1.
+6. If `len(original) ≠ originalLength` return `INVALID_LENGTH`; if `H(original) ≠ originalDigest`, return `TICKET_INVALID`.
+7. Check that `original` is a `rot` in the event syntax of §8.4.3, that the size field of `v` equals its length, that `d`, `i` and `p` are 44 bytes with an `E` prefix, that `s` is at least 1, that `k` has exactly one entry, a 44-byte `D` key, and `kt="1"`, and that `n` has exactly two entries and `nt="1"`; otherwise return `INVALID_KERI_EVENT`. If `n[0] ≠ commit(next)` of the slot, or `n[1]` equals `n[0]`, return `KEY_BINDING`.
+8. Check that the authenticator can hold the state to be committed; otherwise return `NO_SPACE`.
+9. Collect one UP per §8.2.
+10. After UP, confirm that the transport is still connected, that the context and token deadlines have not passed and that the slot is still CREATED; otherwise return the corresponding error.
+11. Atomically commit: `aid = i`; latest = (kind ADOPT, `s`, `d`, `originalLength`, `originalDigest`, no signature); `recoveryDigest = n[1]`; signature counter 1; phase ACTIVE; `lastSigned` stays null.
+12. After the write completes, generate a StateProof containing this request's challenge per §7.4.2 steps 3–7 and return it.
+
+The authenticator does not verify the signature, SAID or witness receipts of the recovery `rot`; the enterprise does (§12.11). Adopt binds the slot to the AID only through the next key the event commits to, so the slot signs nothing for the AID until a ROT with that key, which the enterprise authorizes. If the response is lost, the platform MUST NOT resend; it queries the state with a new GetState.
+
 ## 8. Common Authenticator Procedures
 
 ### 8.1 Verifying Command Authentication
@@ -909,7 +936,7 @@ Rules:
 
 ### 8.3 Verifying a Ticket
 
-Inputs: `ticket_bstr`, the request `kind`, the slot's persistent state, and TrustConfig.
+Inputs: `ticket_bstr`, the request `kind` (10 for Adopt), the slot's persistent state, and TrustConfig.
 
 The authenticator performs the following steps:
 
@@ -921,7 +948,7 @@ The authenticator performs the following steps:
 6. If `body.kind ≠ request kind`, return `TICKET_INVALID`.
 7. Let owner be the slot's owner; if the role's `capabilityMask` does not contain `bit(8·(owner−1) + (kind−1))`, return `TICKET_INVALID` (valid combinations in Appendix B).
 8. If `signCounter ≠ the slot's signature counter + 1` (with overflow check), return `TICKET_INVALID`.
-9. Compute KeyRef per §6.3 using the **actual signing public key** (old.next for ROT, current otherwise); if `signerKeyRef ≠ KeyRef`, return `TICKET_INVALID`.
+9. Compute KeyRef per §6.3 using the **actual signing public key** (old.next for ROT, next for ADOPT, current otherwise); if `signerKeyRef ≠ KeyRef`, return `TICKET_INVALID`.
 10. If `originalLength ∉ 1..limit(kind)`, return `INVALID_LENGTH`.
 11. Store the Ticket and its verification result, including `linkedDigest`, if present.
 
@@ -939,7 +966,7 @@ The authenticator keeps no record of used Tickets: the signature counter makes e
 |---|---|---|---|
 | ICP | phase=CREATED; owner CLIENT or WORK | current | `s=0`; `d=i` |
 | IXN | phase=ACTIVE | current | `s=latest.seq+1`; `p=latest.said`; `i=aid` |
-| ROT | phase=ACTIVE; owner=WORK; prepared present | old.next | `s=latest.seq+1`; `p=latest.said`; `i=aid`; `k=[old.next]`; `n=[commit(newNext)]` |
+| ROT | phase=ACTIVE; owner=WORK; prepared present | old.next | `s=latest.seq+1`; `p=latest.said`; `i=aid`; `k=[old.next]`; `n` per §8.4.2 item 6 |
 
 - A slot condition mismatch returns `INVALID_STATE`; ROT without prepared returns `INVALID_STATE`.
 - `latest.seq+1` MUST be checked for overflow.
@@ -954,7 +981,10 @@ The authenticator performs the following checks while receiving the message (sin
 3. `t` equals the event type for the kind (`icp` / `ixn` / `rot`).
 4. `d`, `i` and `p` (IXN / ROT) are 44 bytes with an `E` prefix and satisfy the expected values of §8.4.1.
 5. `s` equals the expected sequence number.
-6. ICP / ROT: `k` has exactly 1 entry, equal to `qb64("D", signing public key)`; `kt="1"`; `n` has exactly 1 entry, equal to `commit(next key)` (next for ICP, newNext for ROT) per §6.2; `nt="1"`.
+6. ICP / ROT: `k` has exactly 1 entry, equal to `qb64("D", signing public key)`; `kt="1"`; `nt="1"`; `n[0]` equals `commit(next key)` (next for ICP, newNext for ROT) per §6.2, and `n` has at most one further entry:
+   1. CLIENT ICP: `n` has exactly 1 entry.
+   2. WORK ICP: a second entry, if present, is a 44-byte `E` digest different from `n[0]`, and becomes the slot's `recoveryDigest`.
+   3. WORK ROT: `n[1..]` equals `[recoveryDigest]` when the slot holds one and is empty otherwise. A Ticket whose role `capabilityMask` contains bit 17 (Appendix B) MAY instead set, replace or remove it: a second entry, if present, is a 44-byte `E` digest different from `n[0]` and becomes the slot's `recoveryDigest`, and without one the slot holds none. A different `n[1..]` under a role key without bit 17 returns `TICKET_INVALID`.
 7. Delegated event types (`dip` / `drt`) are rejected.
 
 A format or field mismatch returns `INVALID_KERI_EVENT`; a key, commitment or AID mismatch returns `KEY_BINDING`.
@@ -1051,8 +1081,9 @@ The signature is a 64-byte Ed25519 signature over the message, verifiable under 
 | UpdateTrustConfig | TrustConfig and forcePINChange; PIN record, slots, group records and FIDO credentials unchanged (§7.12 step 9) |
 | CreateIdentity | The slot's keys and state |
 | PrepareRotation | The slot's prepared entry (latest unchanged) |
-| Sign ICP / IXN | The slot's latest (= this event, including the original signature), signature counter and lastSigned |
-| Sign ROT | The slot's keys (current←old.next, next←newNext), latest, signature counter and lastSigned; prepared deleted |
+| Sign ICP / IXN | The slot's latest (= this event, including the original signature), signature counter and lastSigned; for ICP also `recoveryDigest` |
+| Adopt | The slot's aid, latest (without signature), `recoveryDigest`, signature counter and phase |
+| Sign ROT | The slot's keys (current←old.next, next←newNext), latest, `recoveryDigest`, signature counter and lastSigned; prepared deleted |
 | Sign EXN / RPY / GROUP_EXN | The slot's signature counter and lastSigned |
 | Sign GROUP / GROUP_SUPERSEDE | The group record for `i` (created, reused per §8.4.4 item 6, or `t`, seq, said, prior, originalLength, originalDigest, original signature, actualPublic and signCounter replaced; `replaced` cleared for GROUP, set and supersedeCount incremented for GROUP_SUPERSEDE), and the slot's signature counter and lastSigned |
 | Sign GROUP_RELEASE | The group record for the released group AID replaced by its tombstone, and the slot's signature counter and lastSigned |
@@ -1120,11 +1151,11 @@ body   = [1, kind, signerKeyRef_b32, signCounter,
 
 | Field | Description |
 |---|---|
-| kind | 1..5, or 6..9 with group member signing |
+| kind | 1..5 and 10 (ADOPT, §7.15), or 6..9 with group member signing |
 | signerKeyRef | §6.3, computed over the actual signing public key |
 | signCounter | The slot's signature counter value after this signature, i.e. the current value + 1 |
 | originalDigest | H(message) |
-| originalLength | 1..limit(kind) |
+| originalLength | 1..limit(kind); 1..1280 for ADOPT |
 | linkedDigest | Optional; only with kind 4 on an authenticator that implements group member signing. The `originalDigest` of the member signature (kind 5, 6, 7 or 8, same slot, `signCounter` one lower) whose user action this signature takes over (§8.2 step 1) |
 
 The enterprise learns the slot's current signature counter from the last archived Signed (§9.4) or from a StateProof (§9.3). For several consecutive signatures on one slot it issues Tickets with consecutive counter values; each becomes usable once the previous one has been used.
@@ -1141,7 +1172,8 @@ stateBody  = [1, device_b32, resetEpoch, configurationDigest_b32,
 authState  = [pinRetries, powerCycleState(0/1), permissions, initialUsageRemainingMs, contextRemainingMs]
 slots      = [slot0, slot1, slot2, slot3]
 slot       = [index, owner, phase, currentPublic_b32/null, nextPublic_b32/null,
-              preparedPublic_b32/null, aid_t44/null, head/null, signCounter]
+              preparedPublic_b32/null, aid_t44/null, head/null, signCounter,
+              ? recoveryDigest_t44]
 head       = [kind, seq, said_t44, originalLength, originalDigest_b32]
 group      = [slot, groupAid_t44, t_tstr, seq, said_t44 / null, originalLength,
               originalDigest_b32 / null, signCounter, replaced, supersedeCount] / null
@@ -1149,7 +1181,8 @@ group      = [slot, groupAid_t44, t_tstr, seq, said_t44 / null, originalLength,
 
 - All four slots are returned together in every StateProof.
 - `preparedPublic` is the actual newNext; the existing next key signs the rot.
-- `head.kind` is ICP, IXN or ROT and matches the owner. The original signature is retrieved with Recover.
+- `head.kind` is ICP, IXN or ROT and matches the owner, or ADOPT (10) for a slot adopted under §7.15 that has not yet rotated. The original signature is retrieved with Recover; an ADOPT head has none.
+- `recoveryDigest` is present exactly when the slot holds a recovery commitment (§5.2).
 - `group` is present exactly when the request carried a group AID (§7.4.2): the group record for that AID, or null when there is none. `t` is `"icp"`, `"ixn"` or `"rot"`, or `"rel"` for a tombstone; `signCounter` is the slot counter value of the signature the record holds, which Recover returns (§7.8). For a tombstone, `slot` is the slot that released the record, `said` and `originalDigest` are null, and `seq`, `originalLength`, `signCounter`, `replaced` and `supersedeCount` are 0: a tombstone states only that the group AID was released, and the last recorded event and the release signature are taken from the enterprise archive (§12.8 item 7.8). `replaced` is 1 when the recorded event replaced another event at the same `seq` and 0 otherwise. A StateProof returned by CreateIdentity or PrepareRotation carries no `group` element.
 - The platform computes KeyRef itself per §6.3.
 - Verifiers verify a StateProof with the device's attestation public key registered at onboarding (§12.5 step 2).
@@ -1229,7 +1262,7 @@ Codes below 0xF0 are CTAP status codes with their CTAP meaning (BUSY is CTAP1_ER
 Except for `BUSY`, the `USER_ACTION_TIMEOUT` of Sign / UploadEnd and the `TICKET_INVALID` of Ticket verification, both described below, an error MUST zeroize the whole context (§8.8) when any of the following holds:
 
 1. An upload is in progress when the error occurs; or
-2. The command is one of CreateIdentity, Sign, PrepareRotation, Personalize, UpdateTrustConfig, BindEnterprise, Reset, UploadBegin / Chunk / End; or
+2. The command is one of CreateIdentity, Sign, PrepareRotation, Adopt, Personalize, UpdateTrustConfig, BindEnterprise, Reset, UploadBegin / Chunk / End; or
 3. The status code is one of PIN_AUTH_INVALID, PIN_TOKEN_EXPIRED, INTERNAL, RECOVERY_REQUIRED, TICKET_INVALID, CONFIG_INVALID, KEEPALIVE_CANCEL.
 
 When Sign or UploadEnd returns USER_ACTION_TIMEOUT, the authenticator clears the signing state, parser and upload state and keeps the context and token (§8.2). When Sign or UploadBegin returns `TICKET_INVALID` from Ticket verification (§7.7 step 5, §8.3), before any message byte is processed and before UP, and no upload was in progress, the authenticator clears the Ticket and signing state and keeps the context and token, so the platform can obtain a new Ticket and sign without a new PIN entry; over NFC the tap of the field session is then still unconsumed. `TICKET_INVALID` at any later step (§7.7 steps 13 and 17, after the message or the UP) zeroizes the context as listed above. Other errors (for example `INVALID_PARAMETER` from GetState) keep the context. `BUSY` always keeps the current upload and context.
@@ -1398,7 +1431,7 @@ The enterprise MUST reject a device whose lifecycle is not STOCK_UNBOUND at step
 
 1. Obtain a token (READ|SIGN).
 2. PrepareRotation(slot, challenge) → StateProof; record preparedPublic (newNext). If prepared already exists, the same value is returned.
-3. The platform constructs the rot: `k=[old.next]`, `n=[commit(newNext)]`, `s=latest.seq+1`, `p=latest.said`.
+3. The platform constructs the rot: `k=[old.next]`, `n=[commit(newNext)]`, followed by the slot's `recoveryDigest` when it holds one (§8.4.2 item 6), `s=latest.seq+1`, `p=latest.said`.
 4. The enterprise issues a Ticket with `signerKeyRef = KeyRef(old.next)`.
 5. Sign(ROT) / upload → one touch → after the authenticator commits, current=old.next, next=newNext, and prepared is deleted.
 6. Recover from a lost response per §12.3.
@@ -1433,11 +1466,12 @@ The enterprise Ticket issuer MUST:
    2. for `ixn` and `rot`, approve only an event with `s` = accepted sequence + 1 and `p` = the accepted latest SAID; for `icp`, only an event whose `k`, `n`, `kt`, `nt`, `b` and `bt` match the group parameters agreed by all members, as shown by the initiator's `/multisig/icp` `exn` and by the confirmation of each member the service serves; the witness policy for group AIDs is enterprise policy. As the one exception, under item 7.5(a) the service MAY approve for GROUP_SUPERSEDE the event the group's witnesses accepted at (group AID, `s`), byte for byte, when the slot's group record holds a different event at `s` (`R.seq = s` and `R.said` differs from the accepted event's SAID); it checks that event against its own predecessor and the establishment event preceding it in the accepted KEL rather than against the accepted head, and the accepted head is unchanged. Only a member whose record holds a different event at the accepted head's sequence number needs this signature before it can sign the next event (§12.9 item 8); a member without a record, or whose record is further behind, signs the next event under GROUP;
    3. approve, across all members it serves, at most one original per (group AID, `s`), with one exception: once it has recorded under item 7.5 that the approved original cannot reach its threshold, it MAY approve one replacement original for that (group AID, `s`), which then becomes the approved original for every member. A member whose group record holds the abandoned event signs the replacement under GROUP_SUPERSEDE; a member whose record does not, including when no member signed the abandoned event, signs it under GROUP;
    4. verify the SAID, that the slot's current key is a member key of the event (for `ixn`, of the `k` of the group's latest establishment event), that for `rot` the member's current key either satisfies its prior next-key commitment in that establishment event or, when no entry of that event's `n` commits to it, belongs to a joining member whose addition the event's other signers authorize under the prior next threshold, that every entry of `k` is a 44-byte `D` key and every entry of `n` a 44-byte `E` digest (for `ixn` in the latest establishment event, which the authenticator does not see), the thresholds and the witness policy;
-   5. record a determination that an approved original did not and cannot reach its signing threshold before it approves a replacement under item 7.3. The determination rests on one of: (a) a different event at the same (group AID, `s`) has been accepted by the group's witnesses, and the replacement is that event; this determination MAY be recorded once the witnesses have accepted that event, including when `s` is at or below the accepted sequence number; (b) members whose combined weight leaves the remaining weight below the current threshold, or for `rot` the prior next threshold, have refused the original, as recorded by a signed `exn` or by the service for members it serves; or (c) an enterprise-defined time has passed without acceptance, in which case the original can still reach its threshold later and the service records that residual risk. It signs a GROUP_SUPERSEDE Ticket only for that replacement, or for a group `icp` that reuses the record of an inception it has determined abandoned in the same way (§8.4.4 item 6), and only with a role key whose capability includes bit 14 (Appendix B), which it SHOULD hold separately from the role keys for routine signing;
+   5. record a determination that an approved original did not and cannot reach its signing threshold before it approves a replacement under item 7.3. The determination rests on one of: (a) a different event at the same (group AID, `s`) has been accepted by the group's witnesses, and the replacement is that event; this determination MAY be recorded once the witnesses have accepted that event, including when `s` is at or below the accepted sequence number; (b) members whose combined weight leaves the remaining weight below the current threshold, or for `rot` the prior next threshold, have refused the original, as recorded by a signed `exn` or by the service for members it serves; or (c) an enterprise-defined time has passed without acceptance, in which case the original can still reach its threshold later and the service records that residual risk. It signs a GROUP_SUPERSEDE Ticket only for that replacement, or for a group `icp` that reuses the record of an inception it has determined abandoned in the same way (§8.4.4 item 6), and only with a role key whose capability includes bit 14 (Appendix B);
    6. for GROUP_EXN, approve only an `exn` whose `i` is a group AID of which the slot's current key is a member key in the group's accepted key state, with the route, recipients and embedded material its purpose allows; for a group `rpy` signed under kind 5, check the same for the group AID the reply names;
    7. before issuing a ROT Ticket (kind 3) for a WORK slot, check, for every group whose latest accepted establishment event lists the slot's current key in `k` or `commit(current)` in `n`, whether or not the slot holds a group record for that group (a rotation-only member, or a member that has not yet signed for the group, holds none), that this event's `n` contains `commit(next)` of the slot, the key the rotation makes current; otherwise refuse the Ticket until that group has rotated, because the slot would lose its share of the group's prior next threshold (§12.9 item 3). A group for which the enterprise has recorded a retirement determination (VAF §6.6) is not counted: it can no longer sign or rotate, so the slot's share in it has no further use;
-   8. issue a GROUP_RELEASE Ticket (kind 9) only when the slot no longer takes part in the group: the group is retired (VAF §6.6); or neither the slot's current key nor `commit(next)` of the slot appears in `k` or `n` of the group's latest accepted establishment event, and no event proposed at the following sequence number names it; or the employee's participation ends by an enterprise decision recorded with its grounds. Before it relies on such a decision for a slot whose current key or `commit(next)` still appears in `k` or `n` of the group's latest accepted establishment event, it SHOULD determine whether the remaining members still satisfy `kt` and `nt`, as VAF §6.5 item 7.1 does for a loss, and record that determination with the decision, because the release ends the slot's share in the group. It MUST first have archived the signature the record holds, because a tombstone keeps no signature (§5.2), MUST sign the Ticket only with a role key whose capability includes bit 16, which it SHOULD hold separately from the role keys for routine signing, and MUST record each release.
+   8. issue a GROUP_RELEASE Ticket (kind 9) only when the slot no longer takes part in the group: the group is retired (VAF §6.6); or neither the slot's current key nor `commit(next)` of the slot appears in `k` or `n` of the group's latest accepted establishment event, and no event proposed at the following sequence number names it; or the employee's participation ends by an enterprise decision recorded with its grounds. Before it relies on such a decision for a slot whose current key or `commit(next)` still appears in `k` or `n` of the group's latest accepted establishment event, it SHOULD determine whether the remaining members still satisfy `kt` and `nt`, as VAF §6.5 item 7.1 does for a loss, and record that determination with the decision, because the release ends the slot's share in the group. It MUST first have archived the signature the record holds, because a tombstone keeps no signature (§5.2), MUST sign the Ticket only with a role key whose capability includes bit 16, and MUST record each release.
 8. Archive every Signed that verifies against a Ticket it issued and the message it stored for that Ticket, whether or not the approval, the enterprise's Ticket window or the employee's authority is still current. A signature committed by the authenticator exists regardless; time windows and authority decide only whether a Ticket is issued and whether a signed message is sent (VAF §6.3).
+9. For recovery commitments (§12.11): issue an ICP or ROT Ticket for a WORK slot only for an event whose second `n` entry is the recovery commitment the enterprise assigned to that AID, or none; sign a ROT Ticket that sets, replaces or removes a recovery commitment, and an ADOPT Ticket, only with a role key whose capability includes bit 17, and record each.
 
 ### 12.9 Group Participation
 
@@ -1476,6 +1510,20 @@ The update keeps KeyRef, AIDs and signature counters, so the archived heads and 
 
 ---
 
+### 12.11 Identity Recovery
+
+An enterprise that holds a recovery key for a WORK AID can move the AID to a new authenticator after the old one is lost, reset or blocked, without changing the AID or the credentials issued to it. The recovery key is held by the enterprise outside any slot; this document does not specify its carrier. Each recovery key is used for one recovery only.
+
+1. **Commitment.** At inception the enterprise assigns the AID a recovery key `R` and gives the platform `E = commit(R)`. The platform builds the WORK `icp` with `n=[commit(next), E]`, `nt="1"`. Each later `rot` of the slot carries `E` unchanged (§12.6 step 3). An existing AID receives a commitment in an ordinary ROT under a Ticket signed with a bit 17 role key.
+2. **Loss.** The enterprise retires the old reset epoch (VAF §6.5 item 1) and stops issuing Tickets for its slots.
+3. **New slot.** On the new authenticator the employee runs CreateIdentity(WORK) and reports `nextPublic` from the StateProof.
+4. **Recovery rot.** The enterprise builds a `rot` of the AID at `s = accepted seq + 1` with `k=[qb64("D", R)]`, `kt="1"`, `n=[commit(nextPublic), E']`, `nt="1"`, where `E'` commits to a new recovery key; signs it with `R`; and publishes it to the AID's witnesses. Until step 6 completes, the AID's current key is `R`, and the enterprise MUST NOT sign any other event or message with it.
+5. **Adopt.** Once the recovery `rot` is accepted, the enterprise issues an ADOPT Ticket for it (`signCounter` 1, KeyRef over `nextPublic`), and the platform calls Adopt (§7.15).
+6. **Handover.** The platform calls PrepareRotation and builds the next `rot` per §12.6: `k=[qb64("D", nextPublic)]`, `n=[commit(newNext), E']`. The enterprise issues the ROT Ticket, the slot signs it, and the enterprise publishes it. The AID's current key is then a slot key again, and the slot permits all WORK kinds.
+7. **Lost responses** in steps 5 and 6 are reconciled per §12.3: for Adopt, a StateProof whose slot has `aid` and head `said` of the recovery `rot` shows the commit.
+
+The old authenticator still holds a next key that the AID committed before step 4, but it signs only under a Ticket, which the enterprise no longer issues for the retired epoch (step 2). The enterprise SHOULD monitor each AID with a recovery commitment for establishment events it did not authorize, and SHOULD notify the employee of each recovery.
+
 ## 13. Security Considerations
 
 ### 13.1 Guarantees Provided by the Authenticator
@@ -1486,7 +1534,7 @@ The update keeps KeyRef, AIDs and signature counters, so the archived heads and 
 | Platform silently produces new signatures | Requires a SIGN token, a valid Ticket and a new UP; over NFC a tap satisfies one request only | A touch or tap proves presence, not that the content was seen. A linked Ticket takes over the UP of the member signature made immediately before it, so one user action yields at most two signatures, the second a coordination message the enterprise linked to the first (§8.2) |
 | Enterprise signs unilaterally | Role keys only issue Tickets; signing requires the in-authenticator private key and UP | Relies on trusted firmware |
 | Employee bypasses enterprise policy | No Ticket, no signature | |
-| Rotation to a platform-generated key | k / n / newNext are constrained to in-authenticator keys, and rot is signed with the in-authenticator old.next | Covers rotation only; other forms of long-term takeover are addressed by the enterprise controls of §12.8 |
+| Rotation to a platform-generated key | k / n[0] / newNext are constrained to in-authenticator keys, rot is signed with the in-authenticator old.next, and a recovery commitment in n[1] is carried unchanged except under a bit 17 role key | Covers rotation through the authenticator only; a recovery commitment lets the enterprise recovery key rotate the AID without it (§13.2 item 15); other forms of long-term takeover are addressed by the enterprise controls of §12.8 |
 | Fork within a slot | Events advance strictly by seq / prior, are written before being returned, and latest can only be retrieved as its original signature | Assumes the authenticator's persistent state cannot be rolled back to an earlier state |
 | Member duplicity in a group AID | With group member signing, a slot signs only at increasing seq of a group AID and at most one event per (group AID, seq), except at most one GROUP_SUPERSEDE per seq, extending the same prior event, under a separately authorized capability, shown and counted in the group record | A group fork needs signatures meeting the threshold; members on other authenticators, or other devices, are outside this guarantee. Membership, thresholds and prior commitments are checked by the enterprise (§12.8 item 7). Assumes no full rollback of non-volatile storage |
 | Duplicate signature after a lost response | Signature counter makes each Ticket single-use; Recover returns the latest, the most recent and each group record's signature | Older non-KEL signatures only from the enterprise archive |
@@ -1508,6 +1556,7 @@ The update keeps KeyRef, AIDs and signature counters, so the archived heads and 
 12. **Linked Tickets:** a role key that can issue kind 4 Tickets can link one of them to a member signature, so that the coordination message takes over that signature's user action (§8.2 step 1). A compromised platform holding a linked Ticket gains no signature beyond the one the enterprise linked, and only immediately after the linked signature in the same context; a compromised role key could already issue a Ticket for any message of its capability. The enterprise issues a linked Ticket only for the coordination message of a member signature it approves in the same decision (§9.2).
 13. **PIN held for one operation:** under §12.1 item 8 the platform keeps the PIN in memory during one confirmed operation, for at most 120 s after its last use. Malware that can read the platform's memory in that time obtains the PIN, as it could while the user types it; the limits of §12.1 item 8 confine the exposure to that operation and keep an interrupted verification from consuming attempts unnoticed.
 14. **Unrecoverable group thresholds:** a member's keys exist only in its authenticator and cannot be recovered after its loss (§7.5, §7.6, VAF §3.3). A group whose `nt` every member must satisfy, for example two of two, ends with the loss of any one member's authenticator: KERI offers no way to rotate or abandon its AID, and credentials it issued can no longer be revoked by it. The authenticator cannot detect this, since it does not evaluate thresholds; the enterprise determines the recoverability of every group `icp` and `rot` it approves (VAF §3.6) and retires a group that cannot rotate (VAF §6.6).
+15. **Recovery commitment:** a WORK AID with a recovery commitment can be rotated by the holder of the recovery key without the authenticator, and so without the employee's PIN or touch (§12.11). The protection of that key is the enterprise's responsibility. A compromised role key with capability bit 17 can, together with the employee's PIN token and touch, replace the commitment in a ROT with one of its own; enterprises SHOULD restrict bit 17 to the role keys used for recovery. An AID without a recovery commitment is not affected.
 
 ### 13.3 PIN
 
@@ -1530,6 +1579,7 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | KERI serialization | KERI 1.0 JSON (`KERI10JSON`) |
 | Complete request / response limit | 2048 bytes |
 | KERI message limit (kinds 1..8) | 16 384 bytes |
+| Adopt message (recovery `rot`) | 1..1280 bytes |
 | Ticket | ≤ 512 bytes |
 | TrustConfig envelope | ≤ 1536 bytes |
 | stateBody | ≤ 1536 bytes |
@@ -1556,6 +1606,7 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | VCAP permission bits | READ=0x0100, SIGN=0x0200, MANAGE=0x0400 |
 | owner | CLIENT=1, WORK=2 |
 | phase | UNUSED=0, CREATED=1, ACTIVE=2 |
+| head kind ADOPT | 10 (§7.15) |
 
 ## Appendix B Role Capability Bits
 
@@ -1574,8 +1625,9 @@ All random values, contextIds, tokens, key agreement private keys and seeds come
 | WORK | GROUP_SUPERSEDE | 14 | `0x4000` | Group replacement (group member signing only) |
 | WORK | GROUP_EXN | 15 | `0x8000` | Group message (group member signing only) |
 | WORK | GROUP_RELEASE | 16 | `0x10000` | Group record release (group member signing only) |
+| WORK | ADOPT | 17 | `0x20000` | Recovery: Adopt, and setting, replacing or removing a recovery commitment in ROT (§8.4.2 item 6) |
 
-All valid bits: `0x1F03` (7 capabilities), or `0xFF03` (10 capabilities) on an authenticator that implements group member signing; message role bits: `0x1800`. Any other bit (e.g. CLIENT ROT or CLIENT GROUP) is invalid; on an authenticator without group member signing, bits 13, 14 and 15 are invalid. A capabilityMask containing an invalid bit, or equal to zero, causes Personalize to fail.
+All valid bits: `0x21F03` (8 capabilities), or `0x3FF03` (12 capabilities) on an authenticator that implements group member signing; message role bits: `0x1800`. Any other bit (e.g. CLIENT ROT or CLIENT GROUP) is invalid; on an authenticator without group member signing, bits 13, 14, 15 and 16 are invalid. A capabilityMask containing an invalid bit, or equal to zero, causes Personalize to fail.
 
 ## Appendix C References
 
@@ -1600,7 +1652,7 @@ All valid bits: `0x1F03` (7 capabilities), or `0xFF03` (10 capabilities) on an a
 
 - [WEBAUTHN] W3C, Web Authentication Level 3 — <https://www.w3.org/TR/webauthn-3/>
 - [VAF] vLEI Authenticator Framework 1.0 — <https://vlei-auth.github.io/vaf/>
-- [ENTERPRISE-INTERFACE] vLEI Enterprise Service Interface, a product interface of the reference enterprise service (formerly the VCAP-EI 1.0 Candidate) — <https://github.com/vlei-auth/vlei-enterprise/blob/main/docs/enterprise-interface.md>
+- [ENTERPRISE-INTERFACE] vLEI Enterprise Service Interface, a product interface of the reference enterprise service — <https://github.com/vlei-auth/vlei-enterprise/blob/main/docs/enterprise-interface.md>
 
 [ctap]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html
 [ctap-commands]: https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html
@@ -1788,7 +1840,7 @@ body = [1, device, tenant, 0, sequence 0, prior null, ownerMask 0x03, minPinChar
   ```
   83584b86010158207ffd6b6997bd11c27e208a78b98d4095618529289856ba8bdf329d53e817e1d40158200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a41519012b636f707358402f49445d8a8077191f4f14b406d1a41d5f7af5de537cfc5b94264fae356a2e775727745245aa4e2c578240baa4a32e8bf01a442237744e02114d0f00b0b5940a
   ```
-- **ICP ticketId (VCAP-EI):** `b27f76ec30ad2b910d00fedc37a1d071` (informative: an identifier used by the reference enterprise interface, not part of any VCAP message; the label is kept so that existing vector files stay unchanged)
+- **ICP ticketId:** `b27f76ec30ad2b910d00fedc37a1d071` (informative: an identifier used by the reference enterprise interface; not part of any VCAP message)
 - **IXN Ticket envelope (signCounter 2):**
 
   ```
@@ -2131,35 +2183,127 @@ Continues E.11 on an authenticator that implements group member signing. Slot 0 
 
 Negative cases (Appendix E JSON `negative`): a seven-element Ticket body with a kind other than 4 returns `INVALID_PARAMETER`; a linked Ticket whose `linkedDigest` names no UP anchor of the context collects a new user action, which over NFC after the tap was consumed returns `UP_REQUIRED`.
 
+### E.14 Identity recovery
+
+Uses the E.0 inputs and in addition the seed labels slot2-current, slot2-next, slot2-newnext, slot3-current, slot3-next, slot3-newnext, recovery-0, recovery-1, recovery-2 and role-recovery. It runs under a successor of the E.12 configuration (sequence 2) that adds role `rcv` with capability mask `0x20400` (ROT and ADOPT, Appendix B). Slot 2 (WORK) incepts an AID with the recovery commitment `commit(R0)` and rotates once carrying it unchanged. The enterprise then signs the recovery `rot` with R0, committing to slot 3's next key and to `commit(R1)`; slot 3, a CREATED WORK slot, adopts the AID (§7.15) and signs the handover `rot` (§12.11). For brevity slot 3 is on the same authenticator; a new authenticator uses its own device identifier in KeyRef. The StateProof after Adopt shows slot 2 after its rotation and slot 3 with head kind ADOPT (10); slot 0 is as in E.8.
+
+- **recovery TrustConfig (successor of E.12, sequence 2):**
+
+  ```
+  8258c48a015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb758202f58e03d638f73e97fb303bd6e079ae5ccb14830c9355a261482909ffc1f970500025820ee3dfaf722220976175bf74bc33ab946411ba4aaf30cdc5bba23a0ea7d5e490203068283636f707319ff0358209f2d66e383e95880e4564f7f4cb53f705de701a457bafcc629932bb389a35eca83637263761a000204005820e25647644112472a2dce33ae3d1a8364ad725acb64094de9fe1de4f57fff8a118058402ddf6e3ae8287212372ed99e01cb581d13f3e181bc71b840041bdf9a5d40248dc8897a0193367c0b871469e0d0d449800cfdd8e4fd43d9eacb4419d36777c903
+  ```
+- **recovery configurationDigest:** `fc17a7832e2f3e24e88b6a94ecaf696caece5684eb8fc981c60d60d87b11dd97`
+- **rolePublic(rcv):** `e25647644112472a2dce33ae3d1a8364ad725acb64094de9fe1de4f57fff8a11`
+- **slot2 currentPublic:** `7097c38ef83e36dea328282ddc154dce57ee07ccf75ae412324db06e9255209f`
+- **slot2 nextPublic:** `693606421815070164eee61eec0ec5a1d8daa9a8a42800ed2e9d5fc8554f7326`
+- **slot2 newNextPublic:** `b06a6cb56c4d7dcbdfdd118adedfcf59d73575fa7af56f4891fda992f8e17e63`
+- **slot3 currentPublic:** `fe65311cee8e52cae91a134946e3f069febee6f3c06be2a1622c98beca092618`
+- **slot3 nextPublic:** `b89946c30df8cfdf1ba1c6db11e3f92e13322fef08c0f80ae105c974da4bef46`
+- **slot3 newNextPublic:** `5715223afdcf79b13f279277b222d611b803de31548b33eb1fb1778e1f7a036b`
+- **R0 public:** `c9de367a126140e20577f836ac11fafddc3ded6ee564830b461a8295db007a77`
+- **commit(R0):** `EKlsAPxvwfWWncXcALHrJjnaIyluYZOZBJwPKaqS5bZA`
+- **commit(R1):** `EP5qf28bd1Rwq2MKL0xyWZqZN1Y7FhIKyIaan92SBIVM`
+- **commit(R2):** `EE1O9OW0px2bZpzdzymvHKj1_qWOx_RM_OME6quFeS4T`
+- **slot2 icp with recovery commitment (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON00015a_","t":"icp","d":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","i":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","s":"0","kt":"1","k":["DHCXw474PjbeoygoLdwVTc5X7gfM91rkEjJNsG6SVSCf"],"nt":"1","n":["ENymi0QXCFrZmwGZHWsGMW2Z9uYH8WwON4I0IevoaN1w","EKlsAPxvwfWWncXcALHrJjnaIyluYZOZBJwPKaqS5bZA"],"bt":"0","b":[],"c":[],"a":[]}
+  ```
+- **slot2 AID:** `EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k`
+- **slot2 icp Ticket envelope (ops, kind 1, signCounter 1):**
+
+  ```
+  83584b860101582053ed58cdda0b675884dcb44b2e8c8960cc84475562fc832697a52e37b28e4ff6015820ee5bfc1be91d7fbafa3294b6b6175276162e870959494b914919c035cae08c9d19015a636f7073584041f8e34db51144ceb90b64db7466631ab9000c2dd02bdfe1f76507610c77b18428ba72feb82a8e7ac204c7b1c2e780cf5ba8dac5e6637d4db7a5a9f75d138c07
+  ```
+- **slot2 rot s=1 carrying commit(R0) (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON00018f_","t":"rot","d":"EG_0CzqmdxgoTrDvo5uQ-5gnCJA20LCTCmZCjDvbt-HG","i":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","s":"1","p":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","kt":"1","k":["DGk2BkIYFQcBZO7mHuwOxaHY2qmopCgA7S6dX8hVT3Mm"],"nt":"1","n":["EF3BksHvF-mWiydHW2JCxErD-B4ze1MS3jkh7ZYMUydm","EKlsAPxvwfWWncXcALHrJjnaIyluYZOZBJwPKaqS5bZA"],"bt":"0","br":[],"ba":[],"a":[]}
+  ```
+- **slot2 rot Ticket envelope (ops, kind 3, signCounter 2):**
+
+  ```
+  83584b86010358201b7451be8efd98fb030a09eb0b9b5904101ee1d9d19dcfce36805794e3a9f1cc025820967f832e68e2ff1865e65fd198d4eb5e025a2508b078aca3a0c7efec5d5f9abe19018f636f707358402d3fa42ec31b5c7f7c63c60f2e7d07d89c08ad51983668162e1774c49b171669c42290b65a47e2a70dc30ab7ee9e5c754d18c56d265930cfad6e00b798646c0d
+  ```
+- **slot2 rot s=1 replacing commit(R0) by commit(R2) (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON00018f_","t":"rot","d":"EMPuGgAaoGiOcSrV_lbwHdJYxaa_LzD4plZWymKh4NM2","i":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","s":"1","p":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","kt":"1","k":["DGk2BkIYFQcBZO7mHuwOxaHY2qmopCgA7S6dX8hVT3Mm"],"nt":"1","n":["EF3BksHvF-mWiydHW2JCxErD-B4ze1MS3jkh7ZYMUydm","EE1O9OW0px2bZpzdzymvHKj1_qWOx_RM_OME6quFeS4T"],"bt":"0","br":[],"ba":[],"a":[]}
+  ```
+- **replacing rot Ticket envelope (rcv, kind 3, signCounter 2):**
+
+  ```
+  83584b86010358201b7451be8efd98fb030a09eb0b9b5904101ee1d9d19dcfce36805794e3a9f1cc0258208a138a83aaf7dd2d4f0f6b2bed07205db25c635ae1717d4bb9e9a0cbafa9697d19018f637263765840e6b6fa29a882868b992ce1c9c4780a22f4db9a5a27ba75141011dbcff7f153c81034a98321b955c96463c403f9dd8ef58d402a4e55f28a1df4cfc4f3a0c34b0e
+  ```
+- **recovery rot s=2 signed by R0 (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON00018f_","t":"rot","d":"EDzklUr2XZNY0K-kD5fPJgwyrdrXrP74bX1b6I_GQ-2h","i":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","s":"2","p":"EG_0CzqmdxgoTrDvo5uQ-5gnCJA20LCTCmZCjDvbt-HG","kt":"1","k":["DMneNnoSYUDiBXf4NqwR-v3cPe1u5WSDC0YagpXbAHp3"],"nt":"1","n":["EApVmhwilHpr6zDpJWsmzhfZsEj1ULHFWdiT9-zSlCPb","EP5qf28bd1Rwq2MKL0xyWZqZN1Y7FhIKyIaan92SBIVM"],"bt":"0","br":[],"ba":[],"a":[]}
+  ```
+- **recovery rot length:** `399`
+- **recovery rot originalDigest:** `facf076270b772cd5dd5348328c68e729e1e804e111a3bdf3ae604e15a5a06d8`
+- **recovery rot signature by R0:**
+
+  ```
+  18ad21fa1e6d591a573242bfbbbca47c4c1e8fa0e3f586d2d5f92dbec4c8d3a7a8b30255b947be43f6dbfbc38fa03f8480169e0949aae3d2e82a523903fa740f
+  ```
+- **KeyRef(slot 3, WORK, next):** `53c5d575e00bf851d61f7f3149a66b8616649d18c73db665a70c6e14e2b9303a`
+- **ADOPT Ticket body (kind 10, signCounter 1):**
+
+  ```
+  86010a582053c5d575e00bf851d61f7f3149a66b8616649d18c73db665a70c6e14e2b9303a015820facf076270b772cd5dd5348328c68e729e1e804e111a3bdf3ae604e15a5a06d819018f
+  ```
+- **ADOPT Ticket envelope (rcv):**
+
+  ```
+  83584b86010a582053c5d575e00bf851d61f7f3149a66b8616649d18c73db665a70c6e14e2b9303a015820facf076270b772cd5dd5348328c68e729e1e804e111a3bdf3ae604e15a5a06d819018f6372637658403fbc7f2876112371be9b4bf68edd8eab5eae0a8c3a625008e52dd9597b02ea04777b13bad8bcafd7bc310b9fbc00bf19ee353075dfd75380012ffa79e36ddf08
+  ```
+- **Adopt auth message:**
+
+  ```
+  564341502d434d440076495aba803ca608fd80dd7c4df72663277232d260d8e673fcacc744caa1c7ee55bdad540c452235b3a6935c863a18c58f803cb679043673cfe348066cc686bc69
+  ```
+- **Adopt pinUvAuthParam:** `83cafd748edf6eb28e4e867996c8cbdac9cfb3f046e88e83554d595a7e45bc01`
+- **Adopt request (command byte + CBOR):**
+
+  ```
+  55a6010302589483584b86010a582053c5d575e00bf851d61f7f3149a66b8616649d18c73db665a70c6e14e2b9303a015820facf076270b772cd5dd5348328c68e729e1e804e111a3bdf3ae604e15a5a06d819018f6372637658403fbc7f2876112371be9b4bf68edd8eab5eae0a8c3a625008e52dd9597b02ea04777b13bad8bcafd7bc310b9fbc00bf19ee353075dfd75380012ffa79e36ddf080359018f7b2276223a224b45524931304a534f4e3030303138665f222c2274223a22726f74222c2264223a2245447a6b6c557232585a4e59304b2d6b443566504a67777972647258725037346258316236495f47512d3268222c2269223a2245484a446a563741485a4b46616c57354c72717a446572517a4c797145776b5446416f504e69574d6844396b222c2273223a2232222c2270223a2245475f30437a716d6478676f547244766f3575512d35676e434a4132304c4354436d5a436a447662742d4847222c226b74223a2231222c226b223a5b22444d6e654e6e6f5359554469425866344e7177522d7633635065317535575344433059616770586241487033225d2c226e74223a2231222c226e223a5b22454170566d6877696c487072367a44704a57736d7a68665a73456a31554c484657646954392d7a536c435062222c2245503571663238626431527771324d4b4c307879575a715a4e3159374668494b794961616e3932534249564d225d2c226274223a2230222c226272223a5b5d2c226261223a5b5d2c2261223a5b5d7d0458205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c18fe0218ff582083cafd748edf6eb28e4e867996c8cbdac9cfb3f046e88e83554d595a7e45bc01
+  ```
+- **Adopt request length:** `632`
+- **stateBody after Adopt:**
+
+  ```
+  87015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820fc17a7832e2f3e24e88b6a94ecaf696caece5684eb8fc981c60d60d87b11dd9758205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f6008a0202025820693606421815070164eee61eec0ec5a1d8daa9a8a42800ed2e9d5fc8554f73265820b06a6cb56c4d7dcbdfdd118adedfcf59d73575fa7af56f4891fda992f8e17e63f6782c45484a446a563741485a4b46616c57354c72717a446572517a4c797145776b5446416f504e69574d6844396b850301782c45475f30437a716d6478676f547244766f3575512d35676e434a4132304c4354436d5a436a447662742d484719018f5820967f832e68e2ff1865e65fd198d4eb5e025a2508b078aca3a0c7efec5d5f9abe02782c454b6c7341507876776657576e635863414c48724a6a6e6149796c75595a4f5a424a77504b61715335625a418a0302025820fe65311cee8e52cae91a134946e3f069febee6f3c06be2a1622c98beca0926185820b89946c30df8cfdf1ba1c6db11e3f92e13322fef08c0f80ae105c974da4bef46f6782c45484a446a563741485a4b46616c57354c72717a446572517a4c797145776b5446416f504e69574d6844396b850a02782c45447a6b6c557232585a4e59304b2d6b443566504a67777972647258725037346258316236495f47512d326819018f5820facf076270b772cd5dd5348328c68e729e1e804e111a3bdf3ae604e15a5a06d801782c45503571663238626431527771324d4b4c307879575a715a4e3159374668494b794961616e3932534249564d
+  ```
+- **StateProof after Adopt:**
+
+  ```
+  a20159034687015820778fff294b90bad5caa009193bc568c71c67a3c256d93b27c5feed3f92c8bfb7005820fc17a7832e2f3e24e88b6a94ecaf696caece5684eb8fc981c60d60d87b11dd9758205a84ea3d29fdb36a002309ef83718fb014b8a770a44deb6cb1b85661117b834c850800190300001a000900b0848900020258206a619f5a01d86d569b936810fc5476538b55076dfceffa066b207398b49b89155820228ec3fa95ba54c3ec5bba3d27c235c7245f0ddc3c4fff5c5751dac4ae086d3df6782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a32850100782c4542326571333342376a397537586671485069596e4c47415257775078306f5a6a697033555756374d617a3219012b58200de5cedb04f3a767ec3e1388438f8e1db6ede9989c1b7894612f21564b90a4150189010000f6f6f6f6f6008a0202025820693606421815070164eee61eec0ec5a1d8daa9a8a42800ed2e9d5fc8554f73265820b06a6cb56c4d7dcbdfdd118adedfcf59d73575fa7af56f4891fda992f8e17e63f6782c45484a446a563741485a4b46616c57354c72717a446572517a4c797145776b5446416f504e69574d6844396b850301782c45475f30437a716d6478676f547244766f3575512d35676e434a4132304c4354436d5a436a447662742d484719018f5820967f832e68e2ff1865e65fd198d4eb5e025a2508b078aca3a0c7efec5d5f9abe02782c454b6c7341507876776657576e635863414c48724a6a6e6149796c75595a4f5a424a77504b61715335625a418a0302025820fe65311cee8e52cae91a134946e3f069febee6f3c06be2a1622c98beca0926185820b89946c30df8cfdf1ba1c6db11e3f92e13322fef08c0f80ae105c974da4bef46f6782c45484a446a563741485a4b46616c57354c72717a446572517a4c797145776b5446416f504e69574d6844396b850a02782c45447a6b6c557232585a4e59304b2d6b443566504a67777972647258725037346258316236495f47512d326819018f5820facf076270b772cd5dd5348328c68e729e1e804e111a3bdf3ae604e15a5a06d801782c45503571663238626431527771324d4b4c307879575a715a4e3159374668494b794961616e3932534249564d025840e974df3166a63de55d80ab80696520c9e42f8124133686db5459456c5547b4fd9d71580f355ac7dbdb836d92046a8fcbf0aff53ff67ae67ef8fc265b3b324703
+  ```
+- **handover rot s=3 (UTF-8):**
+
+  ```
+  {"v":"KERI10JSON00018f_","t":"rot","d":"ECUDz1aNvvCnkQrg1dPczfOXZG7qaefAlRQe7PBuJK3o","i":"EHJDjV7AHZKFalW5LrqzDerQzLyqEwkTFAoPNiWMhD9k","s":"3","p":"EDzklUr2XZNY0K-kD5fPJgwyrdrXrP74bX1b6I_GQ-2h","kt":"1","k":["DLiZRsMN-M_fG6HG2xHj-S4TMi_vCMD4CuEFyXTaS-9G"],"nt":"1","n":["EMP73VhkboQr6IThol-oANlafTqNUZM7hSRBh-URvVs7","EP5qf28bd1Rwq2MKL0xyWZqZN1Y7FhIKyIaan92SBIVM"],"bt":"0","br":[],"ba":[],"a":[]}
+  ```
+- **handover rot Ticket envelope (ops, kind 3, signCounter 2):**
+
+  ```
+  83584b860103582053c5d575e00bf851d61f7f3149a66b8616649d18c73db665a70c6e14e2b9303a025820215f7801ba147e862f1c1b8d05dcc8ad37c5b552f161a82e7c351476e29fee1019018f636f707358400ee7ce20b4a0c2b7c9bb436240336164827fec3eb180f20baf12b558087099f6b7605b241a933991e4f231c11b73586e8ee7aa9b955939c676c5a2998485e103
+  ```
+- **handover Signed:**
+
+  ```
+  a5015840b86831331355b39db8f08bcd8892b2c3e3facf6f894ad517acd176bc980418a32f1c0429a0e64e828f6b7e05b1e5fbfd28ff32de4b240cdaa26ff15cfdf34c04025820b89946c30df8cfdf1ba1c6db11e3f92e13322fef08c0f80ae105c974da4bef46035820215f7801ba147e862f1c1b8d05dcc8ad37c5b552f161a82e7c351476e29fee100419018f0502
+  ```
+
+Negative cases (Appendix E JSON `negative`): a CLIENT `icp` with two `n` entries returns `INVALID_KERI_EVENT`; a WORK `icp` whose second `n` entry equals `n[0]` returns `KEY_BINDING`; a slot 2 `rot` that replaces or removes `commit(R0)` under role `ops` returns `TICKET_INVALID`; an ADOPT Ticket under role `ops`, which lacks bit 17, returns `TICKET_INVALID`; Adopt of a `rot` whose `n[0]` is not `commit(next)` of slot 3 returns `KEY_BINDING`; an IXN on slot 3 after Adopt and before the handover `rot` returns `INVALID_STATE`.
+
+
 ## Appendix F Change Control
 
-This document follows these rules from the Candidate onward:
+The following rules apply to this document from its publication as a Candidate Specification:
 
 1. **Versions.** A 1.0.x revision only corrects errors: it changes no message bytes, no domain separator or code point, and no outcome for an implementation that followed the intended reading. A 1.y revision only adds: new optional operations, fields behind a new version path, or new registered values; an implementation of 1.0 remains conformant. Any other change requires 2.0.
 2. **Section numbers.** Published section and appendix numbers are not reused. A removed section remains as a heading marked "(Reserved)".
 3. **Registered values.** Command codes, status codes, GetInfo keys, signing kinds, role capability bits (Appendix B), signature domains (§6.5) and structure versions (§9) are assigned only by a published version of the relevant document. A value is never reassigned; a withdrawn value is marked Reserved.
-4. **Errata.** Errata are submitted as issues in the document's repository. An accepted erratum is published in a 1.0.x revision and listed in the change log.
-
-**Change log.**
-
-- **14 November 2026.** Candidate Specification; first published version.
-- **15 November 2026.** Revision of the Candidate, resolving usability findings on PIN entries and user actions:
-  - Over NFC the tap is the only user action for ordinary operations: a second UP-requiring request in a field session returns the new status `UP_REQUIRED` (0x3B, CTAP2_ERR_UP_REQUIRED) at once instead of waiting for the sensor (§8.2 step 2, §10.1, §11.3, Appendix A).
-  - Linked Tickets: an optional seventh Ticket body element `linkedDigest` lets a kind 4 coordination message take over the user action of the member signature made immediately before it in the same context (§§ 2.1, 7.0, 7.7, 8.2 step 1, 8.3, 8.8, 9.2, 12.9, 13.1, 13.2 item 12, Appendix A, E.13).
-  - A successful UpdateTrustConfig closes the context only when it sets forcePINChange (§§ 5.3, 7.0, 7.12, 12.10, 13.2 item 11).
-  - `TICKET_INVALID` from Ticket verification, before any message byte and before UP, keeps the context and token (§§ 7.7, 10.2).
-  - A platform may hold the PIN in memory for one confirmed operation that needs several contexts, within fixed limits, and may use a newly set PIN at once (§12.1 items 8 and 9, §13.2 item 13).
-  - The platform may look up a configuration successor before connecting the authenticator and may defer the confirming StateProof to its next context (§12.10).
-  - Erratum: §9.2 listed Ticket kinds 7..9 for group member signing; they are 6..8.
-- **16 November 2026.** Revision of the Candidate, resolving a review finding on the loss of a group member's authenticator. The authenticator's behavior, the encodings and the test vectors are unchanged.
-  - Rotation-only members in a group's `n` and their signatures on a group `rot` (§12.9 items 2 and 11).
-  - Procedure on the loss of a member (§12.9 item 10).
-  - A group the enterprise has retired is not counted in the check of §12.8 item 7.7.
-  - Remaining risks of unrecoverable thresholds and of the group records of retired groups (§13.2 items 8 and 14).
-- **16 November 2026 (second revision).** The capacity for group records is shared by the slots, and records can be released:
-  - The capacity for group records is shared by the slots of an authenticator, with `GROUP_RECORDS` raised from 2 per slot to at least 16 per authenticator; the atomicity of a group signature is stated as a requirement on its outcome, and the storage of group records is no longer specified (§§ 5.2, 7.4.2, 7.7 steps 4 and 15, 8.7 rule 7, Appendix A).
-  - New signing kind 9 GROUP_RELEASE with capability bit 16 replaces a group record by a tombstone, after which no slot signs for that group AID again (§§ 7.7, 8.4.4, 8.5.3, 8.5.4, 9.2, 9.3, 10.1, 12.3, 12.8 item 7.8, 12.9 item 12, 13.2 item 8, Appendices A and B); `capabilityMask` widens to 32 bits (§9.1).
-  - A tombstone reports only that its group AID was released: in the `group` element of a StateProof, `said` and `originalDigest` are null and the numeric fields 0 (§§ 9.3, 12.3).
-  - Text that described how the authenticator stores its state is restated as requirements on observable behavior: what the authenticator keeps available, what is observable after an interruption, and what Reset and ROT guarantee through its interfaces. No requirement on behavior changes (§§ 1.1, 3.1, 4.2, 5.1, 7.6 to 7.8, 7.11, 7.12, 7.13.3, 7.14, 8.4.4, 8.6, 8.7 rules 3 to 6, 10.1, 13.1, 13.2 item 10, Appendix D).
-- **17 November 2026.** Revision of the Candidate, resolving review findings on the loss procedures; the authenticator's behavior, the encodings and the test vectors are unchanged. The enterprise's check of a member's own rotation covers every group in which the slot holds a key or commitment, including rotation-only members and members without a group record (§12.8 items 7 and 7.7); a release on the grounds of an enterprise decision is preceded by a recorded determination of its effect on the group (§12.8 item 7.8).
-- **20 November 2026.** Editorial revision of the Candidate. The former companion document VCAP-EI 1.0 is withdrawn as a specification and continues as a product interface of the reference enterprise service (Appendix C.2). VCAP no longer refers to it normatively: procedures that cited an operation of it state the step itself or refer to VAF, and the third condition for the final 1.0 names only VCAP and VAF. The authenticator's behavior, the encodings and the test vectors are unchanged; the label of the informative `ticketId` value in Appendix E.5 is kept.
+4. **Errata.** Errata are submitted as issues in the document's repository. An accepted erratum is published in a 1.0.x revision.

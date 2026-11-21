@@ -495,6 +495,164 @@ N["linked Ticket whose linkedDigest names no UP anchor"] = {
     "linkedDigest": hx(H(b"no such signature")),
     "outcome": "collects a new user action; over NFC after the tap was consumed: 3b (UP_REQUIRED)"}
 
+# ------------------------------------------------ Identity recovery (§7.15, §8.4.2 item 6, §12.11)
+
+ADOPT = 10
+s2c_sk, s2c_pub = ed_keypair(label_seed("slot2-current"))
+s2n_sk, s2n_pub = ed_keypair(label_seed("slot2-next"))
+_, s2nn_pub = ed_keypair(label_seed("slot2-newnext"))
+_, s3c_pub = ed_keypair(label_seed("slot3-current"))
+s3n_sk, s3n_pub = ed_keypair(label_seed("slot3-next"))
+_, s3nn_pub = ed_keypair(label_seed("slot3-newnext"))
+r0_sk, r0_pub = ed_keypair(label_seed("recovery-0"))
+_, r1_pub = ed_keypair(label_seed("recovery-1"))
+_, r2_pub = ed_keypair(label_seed("recovery-2"))
+rcv_sk, rcv_pub = ed_keypair(label_seed("role-recovery"))
+
+# Successor of E.12 adding role 'rcv' with ROT (bit 10) and ADOPT (bit 17).
+r_roles = [["ops", 0xFF03, role_pub], ["rcv", 0x20400, rcv_pub]]
+r_tc_body = cbor([1, device, tenant, reset_epoch, 2, g_config_digest, 0x03, 6, r_roles, extensions])
+r_tc_sig = ed_sign(root_sk, b"VCAP-TRUST\0" + r_tc_body)
+r_tc_env = cbor([r_tc_body, r_tc_sig])
+r_config_digest = H(r_tc_env)
+
+
+def ticket_by(sk, key_id, kind, kref, counter, msg):
+    body = cbor([1, kind, kref, counter, H(msg), len(msg)])
+    sig = ed_sign(sk, b"VCAP-SIGN\0" + body)
+    return body, sig, cbor([body, key_id, sig])
+
+
+# Slot 2 (WORK): icp with a recovery commitment E(R0).
+r_icp, r_aid = keri_event([
+    ("v", ""), ("t", "icp"), ("d", ""), ("i", ""), ("s", "0"),
+    ("kt", "1"), ("k", [qb64("D", s2c_pub)]), ("nt", "1"), ("n", [commit(s2n_pub), commit(r0_pub)]),
+    ("bt", "0"), ("b", []), ("c", []), ("a", []),
+], said_labels=("d", "i"))
+kref2c = keyref(2, WORK, s2c_pub)
+_, _, r_icp_t = ticket(1, kref2c, 1, r_icp)
+r_icp_sig = ed_sign(s2c_sk, r_icp)
+
+# Slot 2 own rot s=1 carrying E(R0) unchanged (role ops).
+def slot2_rot(recovery_list):
+    return keri_event([
+        ("v", ""), ("t", "rot"), ("d", ""), ("i", r_aid), ("s", "1"), ("p", r_aid),
+        ("kt", "1"), ("k", [qb64("D", s2n_pub)]), ("nt", "1"),
+        ("n", [commit(s2nn_pub)] + recovery_list),
+        ("bt", "0"), ("br", []), ("ba", []), ("a", []),
+    ], said_labels=("d",))
+
+
+r_rot, r_rot_said = slot2_rot([commit(r0_pub)])
+kref2n = keyref(2, WORK, s2n_pub)
+_, _, r_rot_t = ticket(3, kref2n, 2, r_rot)
+r_rot_sig = ed_sign(s2n_sk, r_rot)
+# Alternative rot s=1 replacing E(R0) by E(R2): only under role 'rcv' (bit 17).
+x_rot, _ = slot2_rot([commit(r2_pub)])
+_, _, x_rot_t_rcv = ticket_by(rcv_sk, "rcv", 3, kref2n, 2, x_rot)
+_, _, x_rot_t_ops = ticket(3, kref2n, 2, x_rot)
+d_rot, _ = slot2_rot([])
+_, _, d_rot_t_ops = ticket(3, kref2n, 2, d_rot)
+
+# Recovery rot s=2 signed by R0 (enterprise, outside the authenticator); the
+# AID is adopted into slot 3, a CREATED WORK slot (on the same authenticator
+# here, for brevity; a new authenticator uses its own device identifier).
+rec_rot, rec_said = keri_event([
+    ("v", ""), ("t", "rot"), ("d", ""), ("i", r_aid), ("s", "2"), ("p", r_rot_said),
+    ("kt", "1"), ("k", [qb64("D", r0_pub)]), ("nt", "1"),
+    ("n", [commit(s3n_pub), commit(r1_pub)]),
+    ("bt", "0"), ("br", []), ("ba", []), ("a", []),
+], said_labels=("d",))
+rec_sig = ed_sign(r0_sk, rec_rot)
+kref3n = keyref(3, WORK, s3n_pub)
+a_t_body, a_t_sig, a_t_env = ticket_by(rcv_sk, "rcv", ADOPT, kref3n, 1, rec_rot)
+_, _, a_t_env_ops = ticket(ADOPT, kref3n, 1, rec_rot)
+a_P = {1: 3, 2: a_t_env, 3: rec_rot, 4: challenge}
+a_msg = b"VCAP-CMD\0" + context_id + bytes([0x55]) + H(cbor(a_P))
+a_param = hmac.new(token, a_msg, hashlib.sha256).digest()
+a_full = dict(a_P)
+a_full[254] = 2
+a_full[255] = a_param
+a_request = bytes([0x55]) + cbor(a_full)
+
+# StateProof after Adopt.
+r_slots = [[0, WORK, 2, s0c_pub, s0n_pub, NULL, aid, [1, 0, aid, len(icp), H(icp)], 1],
+           empty_slot(1),
+           [2, WORK, 2, s2n_pub, s2nn_pub, NULL, r_aid, [3, 1, r_rot_said, len(r_rot), H(r_rot)], 2, commit(r0_pub)],
+           [3, WORK, 2, s3c_pub, s3n_pub, NULL, r_aid, [ADOPT, 2, rec_said, len(rec_rot), H(rec_rot)], 1, commit(r1_pub)]]
+r_state_body = cbor([1, device, reset_epoch, r_config_digest, challenge, auth_state, r_slots])
+r_state_sig = ed_sign(att_sk, b"VCAP-STATE\0" + r_state_body)
+r_state_proof = cbor({1: r_state_body, 2: r_state_sig})
+
+# Handover rot s=3 by slot 3 with its next key (after PrepareRotation).
+h_rot, h_said = keri_event([
+    ("v", ""), ("t", "rot"), ("d", ""), ("i", r_aid), ("s", "3"), ("p", rec_said),
+    ("kt", "1"), ("k", [qb64("D", s3n_pub)]), ("nt", "1"),
+    ("n", [commit(s3nn_pub), commit(r1_pub)]),
+    ("bt", "0"), ("br", []), ("ba", []), ("a", []),
+], said_labels=("d",))
+_, _, h_t_env = ticket(3, kref3n, 2, h_rot)
+h_sig = ed_sign(s3n_sk, h_rot)
+h_signed = cbor({1: h_sig, 2: s3n_pub, 3: H(h_rot), 4: len(h_rot), 5: 2})
+
+V["E.14 Identity recovery"] = {
+    "recovery TrustConfig (successor of E.12, sequence 2)": hx(r_tc_env),
+    "recovery configurationDigest": hx(r_config_digest),
+    "rolePublic(rcv)": hx(rcv_pub),
+    "slot2 currentPublic": hx(s2c_pub), "slot2 nextPublic": hx(s2n_pub), "slot2 newNextPublic": hx(s2nn_pub),
+    "slot3 currentPublic": hx(s3c_pub), "slot3 nextPublic": hx(s3n_pub), "slot3 newNextPublic": hx(s3nn_pub),
+    "R0 public": hx(r0_pub), "commit(R0)": commit(r0_pub), "commit(R1)": commit(r1_pub), "commit(R2)": commit(r2_pub),
+    "slot2 icp with recovery commitment (UTF-8)": r_icp.decode(), "slot2 AID": r_aid,
+    "slot2 icp Ticket envelope (ops, kind 1, signCounter 1)": hx(r_icp_t),
+    "slot2 rot s=1 carrying commit(R0) (UTF-8)": r_rot.decode(),
+    "slot2 rot Ticket envelope (ops, kind 3, signCounter 2)": hx(r_rot_t),
+    "slot2 rot s=1 replacing commit(R0) by commit(R2) (UTF-8)": x_rot.decode(),
+    "replacing rot Ticket envelope (rcv, kind 3, signCounter 2)": hx(x_rot_t_rcv),
+    "recovery rot s=2 signed by R0 (UTF-8)": rec_rot.decode(),
+    "recovery rot length": len(rec_rot), "recovery rot originalDigest": hx(H(rec_rot)),
+    "recovery rot signature by R0": hx(rec_sig),
+    "KeyRef(slot 3, WORK, next)": hx(kref3n),
+    "ADOPT Ticket body (kind 10, signCounter 1)": hx(a_t_body),
+    "ADOPT Ticket envelope (rcv)": hx(a_t_env),
+    "Adopt auth message": hx(a_msg), "Adopt pinUvAuthParam": hx(a_param),
+    "Adopt request (command byte + CBOR)": hx(a_request), "Adopt request length": len(a_request),
+    "stateBody after Adopt": hx(r_state_body), "StateProof after Adopt": hx(r_state_proof),
+    "handover rot s=3 (UTF-8)": h_rot.decode(),
+    "handover rot Ticket envelope (ops, kind 3, signCounter 2)": hx(h_t_env),
+    "handover Signed": hx(h_signed),
+}
+ed_verify(root_pub, r_tc_sig, b"VCAP-TRUST\0" + r_tc_body)
+ed_verify(rcv_pub, a_t_sig, b"VCAP-SIGN\0" + a_t_body)
+ed_verify(r0_pub, rec_sig, rec_rot)
+ed_verify(s3n_pub, h_sig, h_rot)
+ed_verify(att_pub, r_state_sig, b"VCAP-STATE\0" + r_state_body)
+assert len(r_tc_env) <= 1536 and len(a_t_env) <= 512 and len(rec_rot) <= 1280
+assert len(a_request) <= 2048 and len(r_state_body) <= 1536
+
+bad_client_icp, _ = keri_event([
+    ("v", ""), ("t", "icp"), ("d", ""), ("i", ""), ("s", "0"),
+    ("kt", "1"), ("k", [qb64("D", s1c_pub)]), ("nt", "1"), ("n", [commit(s1n_pub), commit(r0_pub)]),
+    ("bt", "0"), ("b", []), ("c", []), ("a", []),
+], said_labels=("d", "i"))
+dup_icp, _ = keri_event([
+    ("v", ""), ("t", "icp"), ("d", ""), ("i", ""), ("s", "0"),
+    ("kt", "1"), ("k", [qb64("D", s2c_pub)]), ("nt", "1"), ("n", [commit(s2n_pub), commit(s2n_pub)]),
+    ("bt", "0"), ("b", []), ("c", []), ("a", []),
+], said_labels=("d", "i"))
+wrong_rec, _ = keri_event([
+    ("v", ""), ("t", "rot"), ("d", ""), ("i", r_aid), ("s", "2"), ("p", r_rot_said),
+    ("kt", "1"), ("k", [qb64("D", r0_pub)]), ("nt", "1"),
+    ("n", [commit(s3c_pub), commit(r1_pub)]),
+    ("bt", "0"), ("br", []), ("ba", []), ("a", []),
+], said_labels=("d",))
+N["CLIENT icp with two n entries (§8.4.2 item 6.1)"] = {"message": bad_client_icp.decode(), "status": "f3"}
+N["WORK icp whose second n entry equals n[0] (§8.4.2 item 6.2)"] = {"message": dup_icp.decode(), "status": "f4"}
+N["slot2 rot replacing commit(R0) under role ops (§8.4.2 item 6.3)"] = {"message": x_rot.decode(), "ticket": hx(x_rot_t_ops), "status": "f5"}
+N["slot2 rot removing commit(R0) under role ops (§8.4.2 item 6.3)"] = {"message": d_rot.decode(), "ticket": hx(d_rot_t_ops), "status": "f5"}
+N["ADOPT Ticket under role ops without bit 17 (§8.3 step 7)"] = {"ticket": hx(a_t_env_ops), "status": "f5"}
+N["Adopt of a rot whose n[0] is not commit(slot 3 next) (§7.15 step 7)"] = {"message": wrong_rec.decode(), "status": "f4"}
+N["Sign IXN on slot 3 after Adopt, before the handover rot (§7.7 step 6)"] = {"status": "f0"}
+
 # --------------------------------------------------------------- self-check
 
 ed_verify(root_pub, tc_sig, b"VCAP-TRUST\0" + tc_body)
